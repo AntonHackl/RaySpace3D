@@ -1,0 +1,219 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Preprocess Dataset",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/Debug/preprocess_dataset.exe",
+            "args": [
+                "--dataset", "${workspaceFolder}/dtl_cnty.wkt",
+                "--output-geometry", "${workspaceFolder}/dtl_cnty_preprocessed.json",
+                "--output-timing", "${workspaceFolder}/preprocessing_dtl_cnty_timing.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "CMake: build"
+        },
+        {
+            "name": "Launch OptiX Raytracer (with preprocessed data)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/Debug/raytracer.exe",
+            "args": [
+                "--geometry", "${workspaceFolder}/generated_files/dtl_cnty_preprocessed.json",
+                "--points", "${workspaceFolder}/generated_files/dtl_cnty_points_100000.wkt",
+                "--runs", "10",
+                "--output", "${workspaceFolder}/raytracing_timing.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "CMake: build"
+        },
+        {
+            "name": "Attach to Process",
+            "type": "cppvsdbg",
+            "request": "attach",
+            "processId": "${command:pickProcess}"
+        },
+        {
+            "name": "Generate Random Points (Uniform)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_random_points.py",
+            "args": [
+                "${workspaceFolder}/generated_files/dtl_cnty.wkt",
+                "10000",
+                "--output",
+                "${workspaceFolder}/generated_files/dtl_cnty_10000.wkt",
+                "--method",
+                "uniform",
+                "--plot-points",
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Generate Random Points (Gaussian)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_random_points.py",
+            "args": [
+                "${workspaceFolder}/generated_files/USADetailedWaterBodies.wkt",
+                "10000000",
+                "--output",
+                "${workspaceFolder}/generated_files/USADetailedWaterBodies_1.wkt",
+                "--method",
+                "gaussian",
+                // "--plot-points",
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Generate Random Points (Polygons Only)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_random_points.py",
+            "args": [
+                "${workspaceFolder}/generated_files/dtl_cnty.wkt",
+                "10000",
+                "--output",
+                "${workspaceFolder}/generated_files/dtl_cnty_10000.wkt",
+                "--method",
+                "uniform",
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Validate Ray Results",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/validate_ray_results.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Plot Triangulation",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/plot_triangulation.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Triangulate Single Polygon",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/Debug/triangulate_single_polygon.exe",
+            "args": [
+                "${workspaceFolder}/test_dataset.wkt",
+                "3"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "CMake: build"
+        },
+        {
+            "name": "Visualize Single Polygon Triangulation",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualize_single_polygon.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Visualize Performance Results",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualize_performance_results.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Extract Parks Europe Small",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/extract_parks_europe_small.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Plot Preprocessing Timings",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/plot_preprocessing_timings.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+        "name": "Debug Triangulate WKT",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${workspaceFolder}/triangulate_dataset.py",
+        "args": [
+            "${workspaceFolder}/dtl_cnty.wkt",
+            "-o", "${workspaceFolder}/triangles.geojson",
+            "--wkt-out", "${workspaceFolder}/triangles.wkt",
+            "--quality", "30"
+        ],
+        "console": "integratedTerminal",
+        "justMyCode": true
+        },
+        {
+            "name": "Create Performance Plots",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/create_performance_plots.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Create Index Construction Plots",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/create_index_construction_plots.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Compare Uniform vs Gaussian",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/compare_uniform_vs_gaussian.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Full Pipeline: Preprocess + Raytracing",
+            "configurations": [
+                "Preprocess Dataset",
+                "Launch OptiX Raytracer (with preprocessed data)"
+            ],
+            "stopAll": true,
+            "preLaunchTask": "CMake: build"
+        }
+    ]
+}
+
