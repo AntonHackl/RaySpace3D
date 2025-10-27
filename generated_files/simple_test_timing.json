@@ -1,0 +1,40 @@
+{
+  "phases": {
+    "Data Reading": {
+      "duration_us": 6991,
+      "duration_ms": 6.99
+    },
+    "Application Creation": {
+      "duration_us": 2866628,
+      "duration_ms": 2866.63
+    },
+    "Initialization": {
+      "duration_us": 942,
+      "duration_ms": 0.94
+    },
+    "Build Index": {
+      "duration_us": 300,
+      "duration_ms": 0.30
+    },
+    "Module and Pipeline Setup": {
+      "duration_us": 31990,
+      "duration_ms": 31.99
+    },
+    "Query": {
+      "duration_us": 5921,
+      "duration_ms": 5.92
+    },
+    "Output": {
+      "duration_us": 23110,
+      "duration_ms": 23.11
+    },
+    "Cleanup": {
+      "duration_us": 25757,
+      "duration_ms": 25.76
+    }
+  },
+  "total": {
+    "duration_us": 2961662,
+    "duration_ms": 2961.66
+  }
+}

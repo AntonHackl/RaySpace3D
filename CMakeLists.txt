@@ -7,6 +7,11 @@ endif()
 
 project(OptiXSingleRay LANGUAGES CXX CUDA)
 
+# Ensure all targets use the DLL version of the MSVC runtime (avoids CRT conflicts)
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "MSVC runtime" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -23,6 +28,7 @@ if(WIN32)
     # Windows: use vcpkg packages
     find_package(Boost REQUIRED COMPONENTS geometry)
     find_package(CGAL REQUIRED)
+    find_package(tinyobjloader CONFIG REQUIRED)
 else()
     # Linux: use system packages
     set(AE_DEPS_DIR "/root/media/PPoPPAE/deps")
@@ -30,6 +36,7 @@ else()
     find_package(PkgConfig REQUIRED)
     find_package(Boost REQUIRED COMPONENTS system filesystem)
     find_package(CGAL REQUIRED)
+    find_package(tinyobjloader CONFIG REQUIRED)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -42,12 +49,26 @@ include(cmake/nvcuda_compile_module.cmake)
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(CUDA_SOURCES ${SRC_DIR}/raytracing.cu)
 set(CPP_SOURCE   ${SRC_DIR}/main.cpp)
-set(DATASET_LOADER_SOURCE ${SRC_DIR}/dataset_loader.cpp)
+## Removed legacy dataset_loader.cpp
 set(TRIANGULATE_SOURCE ${SRC_DIR}/triangulate_dataset.cpp)
 set(TRIANGULATION_LIB_SOURCE ${SRC_DIR}/triangulation.cpp)
 set(TIMER_SOURCE ${SRC_DIR}/timer.cpp)
 set(TRIANGULATE_SINGLE_SOURCE ${SRC_DIR}/triangulate_single_polygon.cpp)
 set(PREPROCESS_SOURCE ${SRC_DIR}/preprocess_dataset.cpp)
+
+# New dataset loader classes
+set(DATASET_DIR ${SRC_DIR}/dataset)
+set(DATASET_COMMON_DIR ${DATASET_DIR}/common)
+set(DATASET_PREPROCESS_DIR ${DATASET_DIR}/preprocess)
+set(DATASET_RUNTIME_DIR ${DATASET_DIR}/runtime)
+
+set(DATASET_SOURCES
+    ${DATASET_COMMON_DIR}/DatasetUtils.cpp
+    ${DATASET_PREPROCESS_DIR}/DatasetLoaderFactory.cpp
+    ${DATASET_PREPROCESS_DIR}/PolygonDatasetLoader.cpp
+    ${DATASET_PREPROCESS_DIR}/MeshDatasetLoader.cpp
+    ${DATASET_RUNTIME_DIR}/GeometryIO.cpp
+    ${DATASET_RUNTIME_DIR}/PointIO.cpp)
 
 set(PTX_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(OPTIX_MODULE_EXTENSION ".ptx")
@@ -61,11 +82,11 @@ NVCUDA_COMPILE_MODULE(
     NVCC_OPTIONS  "${OPTIX_PROGRAM_TARGET}" "--gpu-architecture=sm_75" "--relocatable-device-code=true" "--expt-relaxed-constexpr" "-I${OptiX_INCLUDE}"
 )
 
-add_executable(raytracer ${CPP_SOURCE} ${DATASET_LOADER_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE})
+add_executable(raytracer ${CPP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
 add_executable(triangulate_single_polygon ${TRIANGULATE_SINGLE_SOURCE} ${TRIANGULATION_LIB_SOURCE})
 
-add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${DATASET_LOADER_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE})
+add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
 # Platform-specific include directories
 if(WIN32)
@@ -73,28 +94,38 @@ if(WIN32)
         ${CUDA_INCLUDE_DIRS} 
         ${OptiX_INCLUDE} 
         ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
+        ${DATASET_RUNTIME_DIR}
         C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
 
     target_include_directories(triangulate_single_polygon PRIVATE 
         ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
         C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
         
     target_include_directories(preprocess_dataset PRIVATE 
         ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
+        ${DATASET_PREPROCESS_DIR}
         C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
 else()
     target_include_directories(raytracer PRIVATE 
         ${CUDA_INCLUDE_DIRS} 
         ${OptiX_INCLUDE} 
         ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
+        ${DATASET_RUNTIME_DIR}
         ${Boost_INCLUDE_DIRS})
 
     target_include_directories(triangulate_single_polygon PRIVATE 
         ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
         ${Boost_INCLUDE_DIRS})
         
     target_include_directories(preprocess_dataset PRIVATE 
         ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
+        ${DATASET_PREPROCESS_DIR}
         ${Boost_INCLUDE_DIRS})
 endif()
 
@@ -105,7 +136,7 @@ add_dependencies(raytracer copy_ptx)
 # OptiX host functions are loaded through the stub headers at runtime, so linking the explicit
 # OptiX libraries is unnecessary and breaks the build when those import libraries are not found.
 # RayJoin works without that explicit linkage, so mirror the same approach here.
-target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUDA_LIBRARY} CGAL::CGAL)
+target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUDA_LIBRARY} CGAL::CGAL tinyobjloader::tinyobjloader)
 
 # Define INCLUDE_OPTIX for raytracer only
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
@@ -113,11 +144,11 @@ target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
 # Platform-specific linking for triangulate_single_polygon and preprocess_dataset
 if(WIN32)
     target_link_libraries(triangulate_single_polygon PRIVATE CGAL::CGAL)
-    target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL)
+    target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader)
 else()
     # Link Boost libraries on Linux
     target_link_libraries(triangulate_single_polygon PRIVATE ${Boost_LIBRARIES} CGAL::CGAL)
-    target_link_libraries(preprocess_dataset PRIVATE ${Boost_LIBRARIES} CGAL::CGAL)
+    target_link_libraries(preprocess_dataset PRIVATE ${Boost_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader)
 endif()
 
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

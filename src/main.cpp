@@ -13,10 +13,12 @@
 #include <string>
 #include <chrono>
 #include "common.h"
-#include "dataset_loader.h"
+#include "dataset/common/Geometry.h"
+#include "dataset/runtime/GeometryIO.h"
+#include "dataset/runtime/PointIO.h"
 #include "timer.h"
 
-constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/PipRay/build/raytracing.ptx";
+constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
 // constexpr const char* ptxPath = "/root/media/Spatial_Data_Management/PipRay/build/raytracing.ptx";
 
 static std::vector<char> readPTX(const char* filename)
@@ -105,12 +107,16 @@ int main(int argc, char* argv[])
 
     float3* d_vertices = nullptr;
     uint3*  d_indices  = nullptr;
+    float3* d_normals = nullptr;
     size_t vbytes = geometry.vertices.size()*sizeof(float3);
     size_t ibytes = geometry.indices.size()*sizeof(uint3);
+    size_t nbytes = geometry.normals.size()*sizeof(float3);
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices),vbytes));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices),ibytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_normals),nbytes));
     CUDA_CHECK(cudaMemcpy(d_vertices,geometry.vertices.data(),vbytes,cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_indices,geometry.indices.data(),ibytes,cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_normals,geometry.normals.data(),nbytes,cudaMemcpyHostToDevice));
 
     CUdeviceptr d_vertices_ptr = reinterpret_cast<CUdeviceptr>(d_vertices);
     CUdeviceptr d_indices_ptr  = reinterpret_cast<CUdeviceptr>(d_indices);
@@ -159,7 +165,7 @@ int main(int argc, char* argv[])
     OptixPipelineCompileOptions pipelineCompileOptions = {};
     pipelineCompileOptions.usesMotionBlur        = false;
     pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
-    pipelineCompileOptions.numPayloadValues      = 3;
+    pipelineCompileOptions.numPayloadValues      = 4;
     pipelineCompileOptions.numAttributeValues    = 2;
     pipelineCompileOptions.exceptionFlags        = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
@@ -210,6 +216,8 @@ int main(int argc, char* argv[])
     hitDesc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
     hitDesc.hitgroup.moduleCH = module;
     hitDesc.hitgroup.entryFunctionNameCH = "__closesthit__ch";
+    hitDesc.hitgroup.moduleAH = module;
+    hitDesc.hitgroup.entryFunctionNameAH = "__anyhit__ah";
     OptixProgramGroup hitPG;
     OPTIX_CHECK(optixProgramGroupCreate(context,&hitDesc,1,&pgOptions,nullptr,nullptr,&hitPG));
 
@@ -273,9 +281,9 @@ int main(int argc, char* argv[])
     RayResult* d_results = nullptr;
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_results), numRays * sizeof(RayResult)));
     
-    int* d_triangle_to_polygon = nullptr;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_polygon), geometry.triangleToPolygon.size() * sizeof(int)));
-    CUDA_CHECK(cudaMemcpy(d_triangle_to_polygon, geometry.triangleToPolygon.data(), geometry.triangleToPolygon.size() * sizeof(int), cudaMemcpyHostToDevice));
+    int* d_triangle_to_object = nullptr;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), geometry.triangleToObject.size() * sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_triangle_to_object, geometry.triangleToObject.data(), geometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
     
     timer.next("Query");
     
@@ -289,7 +297,9 @@ int main(int argc, char* argv[])
             LaunchParams lp = {};
             lp.handle = gasHandle;
             lp.ray_origins = d_ray_origins;
-            lp.triangle_to_polygon = d_triangle_to_polygon;
+            lp.normals = d_normals;
+            lp.indices = d_indices;
+            lp.triangle_to_object = d_triangle_to_object;
             lp.num_rays = numRays;
             lp.result = d_results;
             
@@ -302,7 +312,9 @@ int main(int argc, char* argv[])
         LaunchParams lp = {};
         lp.handle = gasHandle;
         lp.ray_origins = d_ray_origins;
-        lp.triangle_to_polygon = d_triangle_to_polygon;
+        lp.normals = d_normals;
+        lp.indices = d_indices;
+        lp.triangle_to_object = d_triangle_to_object;
         lp.num_rays = numRays;
         lp.result = d_results;
         
@@ -324,11 +336,11 @@ int main(int argc, char* argv[])
         else
             ++numMiss;
     }
-    std::cout << "\n=== Ray Hit/Miss Summary ===" << std::endl;
+    std::cout << "\n=== Point-in-Polygon Summary ===" << std::endl;
     std::cout << "Total rays: " << numRays << std::endl;
-    std::cout << "Hit:  " << numHit << std::endl;
-    std::cout << "Miss: " << numMiss << std::endl;
-    std::cout << "Hit ratio: " << (numRays > 0 ? (double)numHit / numRays * 100.0 : 0.0) << " %" << std::endl;
+    std::cout << "Points INSIDE polygons:  " << numHit << std::endl;
+    std::cout << "Points OUTSIDE polygons: " << numMiss << std::endl;
+    std::cout << "Inside ratio: " << (numRays > 0 ? (double)numHit / numRays * 100.0 : 0.0) << " %" << std::endl;
 
     if (numRays <= 100) {
         std::cout << "\n=== Ray Results ===" << std::endl;
@@ -337,15 +349,12 @@ int main(int argc, char* argv[])
             std::cout << "Ray origin: (" << rayOrigins[i].x << ", " << rayOrigins[i].y << ", " << rayOrigins[i].z << ")" << std::endl;
             
             if (h_results[i].hit) {
-                // int polygonIndex = geometry.triangleToPolygon[h_results[i].triangle_index];
-                std::cout << "Ray HIT the triangles!" << std::endl;
-                std::cout << "  Distance: " << h_results[i].t << std::endl;
+                std::cout << "Point is INSIDE a polygon (ray entering back face)" << std::endl;
+                std::cout << "  Distance to closest surface: " << h_results[i].t << std::endl;
                 std::cout << "  Hit point: (" << h_results[i].hit_point.x << ", " << h_results[i].hit_point.y << ", " << h_results[i].hit_point.z << ")" << std::endl;
-                std::cout << "  Barycentric coordinates: (" << h_results[i].barycentrics.x << ", " << h_results[i].barycentrics.y << ")" << std::endl;
-                // std::cout << "  Triangle index: " << h_results[i].triangle_index << std::endl;
                 std::cout << "  Polygon index: " << h_results[i].polygon_index << std::endl;
             } else {
-                std::cout << "Ray MISSED the triangles" << std::endl;
+                std::cout << "Point is OUTSIDE all polygons (no hit or ray entering front face)" << std::endl;
             }
         }
     } else {
@@ -357,12 +366,12 @@ int main(int argc, char* argv[])
     std::ofstream csvFile("ray_results.csv");
     csvFile << "pointId,polygonId\n";
     for (int i = 0; i < numRays; ++i) {
-        int polygonId = -1;
+        int objectId = -1;
         if (h_results[i].hit) {
-            // polygonId = geometry.triangleToPolygon[h_results[i].triangle_index];
-            polygonId = h_results[i].polygon_index;
+            // objectId = geometry.triangleToObject[h_results[i].triangle_index];
+            objectId = h_results[i].polygon_index;
         }
-        csvFile << i << "," << polygonId << "\n";
+        csvFile << i << "," << objectId << "\n";
     }
     csvFile.close();
 
@@ -370,7 +379,7 @@ int main(int argc, char* argv[])
 
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_results)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_ray_origins)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_triangle_to_polygon)));
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_triangle_to_object)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_result)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_lp)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg)));
@@ -379,6 +388,7 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
     CUDA_CHECK(cudaFree(d_vertices));
     CUDA_CHECK(cudaFree(d_indices));
+    CUDA_CHECK(cudaFree(d_normals));
 
     optixPipelineDestroy(pipeline);
     optixProgramGroupDestroy(raygenPG);

@@ -19,6 +19,7 @@ struct RayResult {
     float3 hit_point;  
     float2 barycentrics;
     int polygon_index;
+    int hit_count;
 };
 
 struct LaunchParams {
@@ -28,6 +29,8 @@ struct LaunchParams {
     RayResult* result;
 
     float3* ray_origins;
-    int* triangle_to_polygon;
+    float3* normals;
+    uint3* indices;
+    int* triangle_to_object;
     int num_rays;
 };

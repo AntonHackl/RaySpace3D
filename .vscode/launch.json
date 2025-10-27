@@ -7,9 +7,10 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/Debug/preprocess_dataset.exe",
             "args": [
-                "--dataset", "${workspaceFolder}/dtl_cnty.wkt",
-                "--output-geometry", "${workspaceFolder}/dtl_cnty_preprocessed.json",
-                "--output-timing", "${workspaceFolder}/preprocessing_dtl_cnty_timing.json"
+                "--dataset", "C:\\Users\\anton\\Documents\\Uni\\Hugging Face\\shapenet_data_uncompressed",
+                "--output-geometry", "${workspaceFolder}/generated_files/shape_net.txt",
+                "--output-timing", "${workspaceFolder}/preprocessing_shape_net.json",
+                "--shuffle"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -23,10 +24,10 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/Debug/raytracer.exe",
             "args": [
-                "--geometry", "${workspaceFolder}/generated_files/dtl_cnty_preprocessed.json",
-                "--points", "${workspaceFolder}/generated_files/dtl_cnty_points_100000.wkt",
+                "--geometry", "${workspaceFolder}/generated_files/shape_net.txt",
+                "--points", "${workspaceFolder}/generated_files/shape_net_points_1000000.wkt",
                 "--runs", "10",
-                "--output", "${workspaceFolder}/raytracing_timing.json"
+                "--output", "${workspaceFolder}/generated_files/shape_net_timing.json"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -39,23 +40,6 @@
             "type": "cppvsdbg",
             "request": "attach",
             "processId": "${command:pickProcess}"
-        },
-        {
-            "name": "Generate Random Points (Uniform)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/generate_random_points.py",
-            "args": [
-                "${workspaceFolder}/generated_files/dtl_cnty.wkt",
-                "10000",
-                "--output",
-                "${workspaceFolder}/generated_files/dtl_cnty_10000.wkt",
-                "--method",
-                "uniform",
-                "--plot-points",
-            ],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
         },
         {
             "name": "Generate Random Points (Gaussian)",
@@ -75,133 +59,29 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Generate Random Points (Polygons Only)",
+            "name": "Generate Random Points (Uniform)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/generate_random_points.py",
+            "program": "${workspaceFolder}/scripts/generate_points_in_bbox.py",
             "args": [
-                "${workspaceFolder}/generated_files/dtl_cnty.wkt",
-                "10000",
-                "--output",
-                "${workspaceFolder}/generated_files/dtl_cnty_10000.wkt",
-                "--method",
-                "uniform",
+                "${workspaceFolder}/generated_files/shape_net.txt",
+                "--num_points", "1000000"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Validate Ray Results",
+            "name": "Generate Points at Object Centers",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/validate_ray_results.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Plot Triangulation",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/plot_triangulation.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Triangulate Single Polygon",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/bin/Debug/triangulate_single_polygon.exe",
+            "program": "${workspaceFolder}/scripts/generate_points_in_bbox.py",
             "args": [
-                "${workspaceFolder}/test_dataset.wkt",
-                "3"
+                "${workspaceFolder}/generated_files/shape_net.txt",
+                "--mode", "object_centers",
+                "--num_points", "1000"
             ],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "console": "integratedTerminal",
-            "preLaunchTask": "CMake: build"
-        },
-        {
-            "name": "Visualize Single Polygon Triangulation",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/visualize_single_polygon.py",
-            "args": [],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Visualize Performance Results",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/visualize_performance_results.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Extract Parks Europe Small",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/extract_parks_europe_small.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Plot Preprocessing Timings",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/plot_preprocessing_timings.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-        "name": "Debug Triangulate WKT",
-        "type": "debugpy",
-        "request": "launch",
-        "program": "${workspaceFolder}/triangulate_dataset.py",
-        "args": [
-            "${workspaceFolder}/dtl_cnty.wkt",
-            "-o", "${workspaceFolder}/triangles.geojson",
-            "--wkt-out", "${workspaceFolder}/triangles.wkt",
-            "--quality", "30"
-        ],
-        "console": "integratedTerminal",
-        "justMyCode": true
-        },
-        {
-            "name": "Create Performance Plots",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/create_performance_plots.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "justMyCode": true
-        },
-        {
-            "name": "Create Index Construction Plots",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/create_index_construction_plots.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "justMyCode": true
-        },
-        {
-            "name": "Compare Uniform vs Gaussian",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/compare_uniform_vs_gaussian.py",
-            "args": [],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "justMyCode": true
         }
     ],
     "compounds": [

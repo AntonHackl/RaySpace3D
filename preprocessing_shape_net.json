@@ -1,0 +1,20 @@
+{
+  "phases": {
+    "Loading Mesh Dataset": {
+      "duration_us": 5645267,
+      "duration_ms": 5645.27
+    },
+    "Shuffling Objects (Random Translation)": {
+      "duration_us": 819684,
+      "duration_ms": 819.68
+    },
+    "Writing Geometry Data": {
+      "duration_us": 12333532,
+      "duration_ms": 12333.53
+    }
+  },
+  "total": {
+    "duration_us": 18798490,
+    "duration_ms": 18798.49
+  }
+}
