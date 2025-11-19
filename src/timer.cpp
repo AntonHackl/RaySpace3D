@@ -1,5 +1,7 @@
 #include "timer.h"
 #include <iomanip>
+#include <unordered_map>
+#include <cctype>
 
 PerformanceTimer::PerformanceTimer() : is_running(false) {
 }
@@ -95,17 +97,29 @@ void PerformanceTimer::writeResultsToFile(const std::string& filename) const {
     
     file << "{\n";
     file << "  \"phases\": {\n";
-    
+
+    // To support multiple occurrences of the same phase name (e.g. Query per task),
+    // emit numbered, lowercase keys like "query_1", "query_2", "output_1" etc.
+    std::unordered_map<std::string,int> counts;
     for (size_t i = 0; i < phases.size(); ++i) {
         const auto& phase = phases[i];
-        file << "    \"" << phase.name << "\": {\n";
+        std::string name = phase.name;
+        // convert to lowercase
+        std::string lname;
+        lname.reserve(name.size());
+        for (char c : name) lname.push_back(std::tolower(static_cast<unsigned char>(c)));
+
+        int idx = ++counts[lname];
+        std::string key = lname + "_" + std::to_string(idx);
+
+        file << "    \"" << key << "\": {\n";
         file << "      \"duration_us\": " << phase.duration_us << ",\n";
         file << "      \"duration_ms\": " << std::fixed << std::setprecision(2) << (double)phase.duration_us / 1000.0 << "\n";
         file << "    }";
         if (i < phases.size() - 1) file << ",";
         file << "\n";
     }
-    
+
     file << "  },\n";
     
     long long total_us = getTotalDuration();

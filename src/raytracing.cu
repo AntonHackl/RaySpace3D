@@ -59,23 +59,11 @@ extern "C" __global__ void __closesthit__ch()
 {
     const float t = optixGetRayTmax();
     const unsigned int triangleIndex = optixGetPrimitiveIndex();
-    const float2 barycentrics = optixGetTriangleBarycentrics();
     
-    const uint3 triangle = params.indices[triangleIndex];
-    
-    const float3 n0 = params.normals[triangle.x];
-    const float3 n1 = params.normals[triangle.y];
-    const float3 n2 = params.normals[triangle.z];
-    
-    const float w = 1.0f - barycentrics.x - barycentrics.y;
-    const float3 interpolated_normal = make_float3(
-        w * n0.x + barycentrics.x * n1.x + barycentrics.y * n2.x,
-        w * n0.y + barycentrics.x * n1.y + barycentrics.y * n2.y,
-        w * n0.z + barycentrics.x * n1.z + barycentrics.y * n2.z
-    );
+    const float3 face_normal = params.normals[triangleIndex];
     
     const float3 ray_dir = optixGetWorldRayDirection();
-    const float dot_product = interpolated_normal.x * ray_dir.x + interpolated_normal.y * ray_dir.y + interpolated_normal.z * ray_dir.z;
+    const float dot_product = face_normal.x * ray_dir.x + face_normal.y * ray_dir.y + face_normal.z * ray_dir.z;
     
     const unsigned int isInside = dot_product > 0.0f;
     

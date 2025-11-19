@@ -1,0 +1,544 @@
+// Prevent Windows.h from defining min/max macros that conflict with std::min/max
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <optix.h>
+#include <optix_stubs.h>
+#include <optix_function_table_definition.h>
+#include <cuda_runtime.h>
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <chrono>
+#include <sstream>
+#include "common.h"
+#include "dataset/common/Geometry.h"
+#include "dataset/runtime/GeometryIO.h"
+#include "dataset/runtime/PointIO.h"
+#include "timer.h"
+
+// Helper function to split comma-separated file paths
+static std::vector<std::string> splitPaths(const std::string& input) {
+    std::vector<std::string> result;
+    std::stringstream ss(input);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        // Trim whitespace
+        size_t start = item.find_first_not_of(" \t");
+        size_t end = item.find_last_not_of(" \t");
+        if (start != std::string::npos && end != std::string::npos) {
+            result.push_back(item.substr(start, end - start + 1));
+        } else if (start != std::string::npos) {
+            result.push_back(item.substr(start));
+        }
+    }
+    return result;
+}
+
+constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
+// constexpr const char* ptxPath = "/root/media/Spatial_Data_Management/PipRay/build/raytracing.ptx";
+
+static std::vector<char> readPTX(const char* filename)
+{
+    std::ifstream file(filename, std::ios::binary);
+    if (!file)
+    {
+        std::cerr << "Failed to open PTX file: " << filename << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+    return std::vector<char>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+#define OPTIX_CHECK(call) do { OptixResult res = call; if(res!=OPTIX_SUCCESS){ std::cerr << "OptiX error " << res << " at " << __FILE__ << ":" << __LINE__ << std::endl; std::exit(EXIT_FAILURE);} } while(0)
+#define CUDA_CHECK(call) do { cudaError_t err = call; if(err!=cudaSuccess){ std::cerr << "CUDA error " << cudaGetErrorString(err) << " at " << __FILE__ << ":" << __LINE__ << std::endl; std::exit(EXIT_FAILURE);} } while(0)
+
+int main(int argc, char* argv[])
+{
+    PerformanceTimer timer;
+    timer.start("Data Reading");
+    
+    std::string geometryFilePath = "";
+    std::string pointDatasetPath = "";
+    std::string outputJsonPath = "performance_timing.json";  // Default output file
+    int numberOfRuns = 1;
+    bool exportResults = true; // set to false with --no-export
+    int warmupRuns = 2; // number of warmup launches before timed Query
+    
+    if (argc > 1) {
+        for (int i = 1; i < argc; ++i) {
+            std::string arg = argv[i];
+            if (arg == "--geometry" && i + 1 < argc) {
+                geometryFilePath = argv[++i];
+            }
+            else if (arg == "--points" && i + 1 < argc) {
+                pointDatasetPath = argv[++i];
+            }
+            else if (arg == "--output" && i + 1 < argc) {
+                outputJsonPath = argv[++i];
+            }
+            else if (arg == "--runs" && i + 1 < argc) {
+                numberOfRuns = std::atoi(argv[++i]);
+            }
+            else if (arg == "--warmup-runs" && i + 1 < argc) {
+                warmupRuns = std::atoi(argv[++i]);
+            }
+            else if (arg == "--no-export") {
+                exportResults = false;
+            }
+            else if (arg == "--help" || arg == "-h") {
+                std::cout << "Usage: " << argv[0] << " [--geometry <path(s)>] [--points <path(s)>] [--output <json_output_file>] [--runs <number>]" << std::endl;
+                std::cout << "Options:" << std::endl;
+                std::cout << "  --geometry <path(s)>  Path(s) to preprocessed geometry text file(s). Use commas to separate multiple files." << std::endl;
+                std::cout << "  --points <path(s)>    Path(s) to WKT file(s) containing POINT geometries. Use commas to separate multiple files." << std::endl;
+                std::cout << "  --output <path>       Path to JSON file for performance timing output" << std::endl;
+                std::cout << "  --runs <number>       Number of times to run the query (for performance testing)" << std::endl;
+                std::cout << "  --help, -h            Show this help message" << std::endl;
+                std::cout << "\nList behavior:" << std::endl;
+                std::cout << "  - If one argument is a list and the other is single, the single item is used for all entries in the list." << std::endl;
+                std::cout << "  - If both are lists, they must have the same length." << std::endl;
+                return 0;
+            }
+        }
+    }
+    
+    std::cout << "OptiX multiple rays example" << std::endl;
+
+    // Parse file lists
+    std::vector<std::string> geometryFiles = splitPaths(geometryFilePath);
+    std::vector<std::string> pointFiles = splitPaths(pointDatasetPath);
+    
+    if (geometryFiles.empty()) {
+        std::cerr << "Error: Geometry file path is required. Use --geometry <path_to_geometry_file>" << std::endl;
+        std::cout << "Note: You can generate a geometry file using the preprocess_dataset tool:" << std::endl;
+        std::cout << "  preprocess_dataset --dataset <wkt_file> --output-geometry <geometry_file.txt>" << std::endl;
+        return 1;
+    }
+    
+    if (pointFiles.empty()) {
+        std::cerr << "Error: Points file path is required. Use --points <path_to_point_file>" << std::endl;
+        return 1;
+    }
+    
+    // Validate list lengths
+    size_t numTasks = std::max(geometryFiles.size(), pointFiles.size());
+    if (geometryFiles.size() > 1 && pointFiles.size() > 1 && geometryFiles.size() != pointFiles.size()) {
+        std::cerr << "Error: When both --geometry and --points are lists, they must have the same length." << std::endl;
+        std::cerr << "  Geometry files: " << geometryFiles.size() << std::endl;
+        std::cerr << "  Point files: " << pointFiles.size() << std::endl;
+        return 1;
+    }
+    
+    std::cout << "Processing " << numTasks << " task(s)" << std::endl;
+    if (geometryFiles.size() == 1 && numTasks > 1) {
+        std::cout << "  Using single geometry file for all tasks: " << geometryFiles[0] << std::endl;
+    }
+    if (pointFiles.size() == 1 && numTasks > 1) {
+        std::cout << "  Using single points file for all tasks: " << pointFiles[0] << std::endl;
+    }
+    
+    timer.next("Application Creation");
+    
+    CUDA_CHECK(cudaFree(0));
+    OPTIX_CHECK(optixInit());
+    OptixDeviceContext context = nullptr;
+    OPTIX_CHECK(optixDeviceContextCreate(0, nullptr, &context));
+    
+    timer.next("Module and Pipeline Setup");
+
+    std::vector<char> ptxData = readPTX(ptxPath);
+    std::cout << "PTX file loaded successfully, size: " << ptxData.size() << " bytes" << std::endl;
+
+    OptixModuleCompileOptions moduleCompileOptions = {};
+    moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
+    moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
+    moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MODERATE;
+
+    OptixPipelineCompileOptions pipelineCompileOptions = {};
+    pipelineCompileOptions.usesMotionBlur        = false;
+    pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+    pipelineCompileOptions.numPayloadValues      = 4;
+    pipelineCompileOptions.numAttributeValues    = 2;
+    pipelineCompileOptions.exceptionFlags        = OPTIX_EXCEPTION_FLAG_NONE;
+    pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
+
+    OptixModule module = nullptr;
+    char log[8192];
+    size_t sizeof_log = sizeof(log);
+    
+    std::cout << "Creating OptiX module..." << std::endl;
+    OptixResult result = optixModuleCreate(context,
+                                  &moduleCompileOptions,
+                                  &pipelineCompileOptions,
+                                  ptxData.data(),
+                                  ptxData.size(),
+                                  log,
+                                  &sizeof_log,
+                                  &module);
+    
+    if (result != OPTIX_SUCCESS) {
+        std::cerr << "OptiX module creation failed with error code: " << result << std::endl;
+        if (sizeof_log > 1) {
+            std::cerr << "OptiX module log:\n" << log << std::endl;
+        }
+        std::exit(EXIT_FAILURE);
+    }
+    
+    if (sizeof_log > 1) {
+        std::cout << "OptiX module log:\n" << log << std::endl;
+    }
+    std::cout << "OptiX module created successfully!" << std::endl;
+
+    OptixProgramGroupOptions pgOptions = {};
+    OptixProgramGroupDesc raygenDesc = {};
+    raygenDesc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    raygenDesc.raygen.module = module;
+    raygenDesc.raygen.entryFunctionName = "__raygen__rg";
+    OptixProgramGroup raygenPG;
+    OPTIX_CHECK(optixProgramGroupCreate(context,&raygenDesc,1,&pgOptions,nullptr,nullptr,&raygenPG));
+
+    OptixProgramGroupDesc missDesc = {};
+    missDesc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    missDesc.miss.module = module;
+    missDesc.miss.entryFunctionName = "__miss__ms";
+    OptixProgramGroup missPG;
+    OPTIX_CHECK(optixProgramGroupCreate(context,&missDesc,1,&pgOptions,nullptr,nullptr,&missPG));
+
+    OptixProgramGroupDesc hitDesc = {};
+    hitDesc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    hitDesc.hitgroup.moduleCH = module;
+    hitDesc.hitgroup.entryFunctionNameCH = "__closesthit__ch";
+    hitDesc.hitgroup.moduleAH = module;
+    hitDesc.hitgroup.entryFunctionNameAH = "__anyhit__ah";
+    OptixProgramGroup hitPG;
+    OPTIX_CHECK(optixProgramGroupCreate(context,&hitDesc,1,&pgOptions,nullptr,nullptr,&hitPG));
+
+    std::vector<OptixProgramGroup> pgs = { raygenPG, missPG, hitPG };
+
+    OptixPipelineLinkOptions linkOptions = {};
+    linkOptions.maxTraceDepth = 1;
+
+    OptixPipeline pipeline = nullptr;
+    OPTIX_CHECK(optixPipelineCreate(context,&pipelineCompileOptions,&linkOptions,pgs.data(),pgs.size(),nullptr,nullptr,&pipeline));
+
+    struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) RaygenRecord { char header[OPTIX_SBT_RECORD_HEADER_SIZE]; RayGenData data; };
+    struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) MissRecord    { char header[OPTIX_SBT_RECORD_HEADER_SIZE]; HitGroupData data; };
+    struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) HitRecord     { char header[OPTIX_SBT_RECORD_HEADER_SIZE]; HitGroupData data; };
+
+    RaygenRecord rgRecord = {};
+    OPTIX_CHECK(optixSbtRecordPackHeader(raygenPG,&rgRecord));
+    rgRecord.data.origin = {0.0f,0.0f,0.0f};
+    rgRecord.data.direction = {0.0f,0.0f,1.0f};
+
+    MissRecord msRecord = {};
+    OPTIX_CHECK(optixSbtRecordPackHeader(missPG,&msRecord));
+
+    HitRecord hgRecord = {};
+    OPTIX_CHECK(optixSbtRecordPackHeader(hitPG,&hgRecord));
+
+    CUdeviceptr d_rg,d_ms,d_hg;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg),sizeof(RaygenRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_ms),sizeof(MissRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hg),sizeof(HitRecord)));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg),&rgRecord,sizeof(RaygenRecord),cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_ms),&msRecord,sizeof(MissRecord),cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_hg),&hgRecord,sizeof(HitRecord),cudaMemcpyHostToDevice));
+
+    OptixShaderBindingTable sbt = {};
+    sbt.raygenRecord            = d_rg;
+    sbt.missRecordBase          = d_ms;
+    sbt.missRecordStrideInBytes = sizeof(MissRecord);
+    sbt.missRecordCount         = 1;
+    sbt.hitgroupRecordBase      = d_hg;
+    sbt.hitgroupRecordStrideInBytes = sizeof(HitRecord);
+    sbt.hitgroupRecordCount     = 1;
+
+    CUdeviceptr d_lp;
+    CUDA_CHECK(cudaMalloc((void**)&d_lp,sizeof(LaunchParams)));
+    
+    // Caching variables for geometry and points
+    std::string cachedGeometryPath = "";
+    GeometryData cachedGeometry;
+    float3* d_vertices = nullptr;
+    uint3* d_indices = nullptr;
+    float3* d_normals = nullptr;
+    int* d_triangle_to_object = nullptr;
+    CUdeviceptr d_gasOutput = 0;
+    OptixTraversableHandle gasHandle = 0;
+    
+    std::string cachedPointsPath = "";
+    PointData cachedPointData;
+    float3* d_ray_origins = nullptr;
+    RayResult* d_results = nullptr;
+    
+    // Process each task
+    for (size_t taskIdx = 0; taskIdx < numTasks; ++taskIdx) {
+        std::string currentGeomPath = geometryFiles[geometryFiles.size() == 1 ? 0 : taskIdx];
+        std::string currentPointsPath = pointFiles[pointFiles.size() == 1 ? 0 : taskIdx];
+        
+        std::cout << "\n=== Task " << (taskIdx + 1) << "/" << numTasks << " ===" << std::endl;
+        std::cout << "Geometry: " << currentGeomPath << std::endl;
+        std::cout << "Points: " << currentPointsPath << std::endl;
+        
+        // Load/cache geometry
+        bool geometryChanged = (currentGeomPath != cachedGeometryPath);
+        if (geometryChanged) {
+            timer.next("Load Geometry");
+            std::cout << "Loading new geometry..." << std::endl;
+            
+            // Free old geometry GPU memory
+            if (d_vertices) CUDA_CHECK(cudaFree(d_vertices));
+            if (d_indices) CUDA_CHECK(cudaFree(d_indices));
+            if (d_normals) CUDA_CHECK(cudaFree(d_normals));
+            if (d_triangle_to_object) CUDA_CHECK(cudaFree(d_triangle_to_object));
+            if (d_gasOutput) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
+            
+            cachedGeometry = loadGeometryFromFile(currentGeomPath);
+            if (cachedGeometry.vertices.empty()) {
+                std::cerr << "Error: Failed to load geometry from " << currentGeomPath << std::endl;
+                continue;
+            }
+            cachedGeometryPath = currentGeomPath;
+            
+            // Upload geometry to GPU
+            timer.next("Upload Geometry");
+            size_t vbytes = cachedGeometry.vertices.size() * sizeof(float3);
+            size_t ibytes = cachedGeometry.indices.size() * sizeof(uint3);
+            size_t nbytes = cachedGeometry.normals.size() * sizeof(float3);
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices), vbytes));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices), ibytes));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_normals), nbytes));
+            CUDA_CHECK(cudaMemcpy(d_vertices, cachedGeometry.vertices.data(), vbytes, cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_indices, cachedGeometry.indices.data(), ibytes, cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_normals, cachedGeometry.normals.data(), nbytes, cudaMemcpyHostToDevice));
+            
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), cachedGeometry.triangleToObject.size() * sizeof(int)));
+            CUDA_CHECK(cudaMemcpy(d_triangle_to_object, cachedGeometry.triangleToObject.data(), cachedGeometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
+            
+            // Build acceleration structure
+            timer.next("Build Index");
+            CUdeviceptr d_vertices_ptr = reinterpret_cast<CUdeviceptr>(d_vertices);
+            CUdeviceptr d_indices_ptr = reinterpret_cast<CUdeviceptr>(d_indices);
+            
+            OptixBuildInput buildInput = {};
+            buildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+            buildInput.triangleArray.vertexBuffers = &d_vertices_ptr;
+            buildInput.triangleArray.numVertices = static_cast<unsigned int>(cachedGeometry.vertices.size());
+            buildInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+            buildInput.triangleArray.vertexStrideInBytes = sizeof(float3);
+            buildInput.triangleArray.indexBuffer = d_indices_ptr;
+            buildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(cachedGeometry.indices.size());
+            buildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+            buildInput.triangleArray.indexStrideInBytes = sizeof(uint3);
+            unsigned int triangle_input_flags = OPTIX_GEOMETRY_FLAG_NONE;
+            buildInput.triangleArray.flags = &triangle_input_flags;
+            buildInput.triangleArray.numSbtRecords = 1;
+            
+            OptixAccelBuildOptions accelOptions = {};
+            accelOptions.buildFlags = OPTIX_BUILD_FLAG_NONE;
+            accelOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
+            
+            OptixAccelBufferSizes gasSizes;
+            OPTIX_CHECK(optixAccelComputeMemoryUsage(context, &accelOptions, &buildInput, 1, &gasSizes));
+            
+            CUdeviceptr d_tempBuffer;
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_tempBuffer), gasSizes.tempSizeInBytes));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_gasOutput), gasSizes.outputSizeInBytes));
+            
+            OPTIX_CHECK(optixAccelBuild(context, 0, &accelOptions, &buildInput, 1, d_tempBuffer, gasSizes.tempSizeInBytes, d_gasOutput, gasSizes.outputSizeInBytes, &gasHandle, nullptr, 0));
+            CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_tempBuffer)));
+            // Ensure the acceleration structure build is completed on the device
+            // and visible to subsequent launches.
+            CUDA_CHECK(cudaDeviceSynchronize());
+            std::cout << "Geometry loaded: " << cachedGeometry.vertices.size() << " vertices, " << cachedGeometry.indices.size() << " triangles" << std::endl;
+        } else {
+            std::cout << "Using cached geometry" << std::endl;
+        }
+        
+        // Load/cache points
+        bool pointsChanged = (currentPointsPath != cachedPointsPath);
+        if (pointsChanged) {
+            timer.next("Load Points");
+            std::cout << "Loading new points..." << std::endl;
+            
+            // Free old points GPU memory
+            if (d_ray_origins) CUDA_CHECK(cudaFree(d_ray_origins));
+            if (d_results) CUDA_CHECK(cudaFree(d_results));
+            
+            cachedPointData = loadPointDataset(currentPointsPath);
+            if (cachedPointData.positions.empty()) {
+                std::cerr << "Error: Failed to load points from " << currentPointsPath << std::endl;
+                continue;
+            }
+            cachedPointsPath = currentPointsPath;
+            
+            // Upload points to GPU
+            timer.next("Upload Points");
+            const int numRays = static_cast<int>(cachedPointData.numPoints);
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_ray_origins), numRays * sizeof(float3)));
+            CUDA_CHECK(cudaMemcpy(d_ray_origins, cachedPointData.positions.data(), numRays * sizeof(float3), cudaMemcpyHostToDevice));
+            
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_results), numRays * sizeof(RayResult)));
+            // Touch allocated device memory to ensure pages are resident and avoid
+            // first-launch page faults. Also synchronize to ensure uploads complete.
+            CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_results), 0, numRays * sizeof(RayResult)));
+            CUDA_CHECK(cudaDeviceSynchronize());
+            
+            std::cout << "Points loaded: " << numRays << std::endl;
+        } else {
+            std::cout << "Using cached points" << std::endl;
+        }
+        
+        const int numRays = static_cast<int>(cachedPointData.numPoints);
+        
+        timer.next("Warmup");
+        const int warmupRuns = 2;
+        for (int warmup = 0; warmup < warmupRuns; ++warmup) {
+            LaunchParams lp = {};
+            lp.handle = gasHandle;
+            lp.ray_origins = d_ray_origins;
+            lp.normals = d_normals;
+            lp.indices = d_indices;
+            lp.triangle_to_object = d_triangle_to_object;
+            lp.num_rays = numRays;
+            lp.result = d_results;
+            
+            CUDA_CHECK(cudaMemcpy((void*)d_lp, &lp, sizeof(LaunchParams), cudaMemcpyHostToDevice));
+            
+            OPTIX_CHECK(optixLaunch(pipeline, 0, d_lp, sizeof(LaunchParams), &sbt, numRays, 1, 1));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+        
+        timer.next("Query");
+
+        if (numberOfRuns > 1) {
+            std::cout << "\n=== Running " << numberOfRuns << " iterations for performance measurement ===" << std::endl;
+            
+            // Perform multiple runs within a single Query phase
+            for (int run = 0; run < numberOfRuns; ++run) {
+                std::cout << "Run " << (run + 1) << "/" << numberOfRuns << std::endl;
+                
+                LaunchParams lp = {};
+                lp.handle = gasHandle;
+                lp.ray_origins = d_ray_origins;
+                lp.normals = d_normals;
+                lp.indices = d_indices;
+                lp.triangle_to_object = d_triangle_to_object;
+                lp.num_rays = numRays;
+                lp.result = d_results;
+                
+                CUDA_CHECK(cudaMemcpy((void*)d_lp, &lp, sizeof(LaunchParams), cudaMemcpyHostToDevice));
+                
+                OPTIX_CHECK(optixLaunch(pipeline, 0, d_lp, sizeof(LaunchParams), &sbt, numRays, 1, 1));
+                CUDA_CHECK(cudaDeviceSynchronize());
+            }
+        } else {
+            LaunchParams lp = {};
+            lp.handle = gasHandle;
+            lp.ray_origins = d_ray_origins;
+            lp.normals = d_normals;
+            lp.indices = d_indices;
+            lp.triangle_to_object = d_triangle_to_object;
+            lp.num_rays = numRays;
+            lp.result = d_results;
+            
+            CUDA_CHECK(cudaMemcpy((void*)d_lp, &lp, sizeof(LaunchParams), cudaMemcpyHostToDevice));
+            
+            std::cout << "\n=== Tracing " << numRays << " rays in a single GPU launch ===" << std::endl;
+            
+            OPTIX_CHECK(optixLaunch(pipeline, 0, d_lp, sizeof(LaunchParams), &sbt, numRays, 1, 1));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+
+        timer.next("Output");
+        std::vector<RayResult> h_results(numRays);
+        CUDA_CHECK(cudaMemcpy(h_results.data(), d_results, numRays * sizeof(RayResult), cudaMemcpyDeviceToHost));
+
+        size_t numHit = 0, numMiss = 0;
+        for (int i = 0; i < numRays; ++i) {
+            if (h_results[i].hit)
+                ++numHit;
+            else
+                ++numMiss;
+        }
+        std::cout << "\n=== Point-in-Polygon Summary ===" << std::endl;
+        std::cout << "Total rays: " << numRays << std::endl;
+        std::cout << "Points INSIDE polygons:  " << numHit << std::endl;
+        std::cout << "Points OUTSIDE polygons: " << numMiss << std::endl;
+        std::cout << "Inside ratio: " << (numRays > 0 ? (double)numHit / numRays * 100.0 : 0.0) << " %" << std::endl;
+
+        if (numRays <= 100) {
+            std::cout << "\n=== Ray Results ===" << std::endl;
+            for (int i = 0; i < numRays; ++i) {
+                std::cout << "\n=== Ray " << (i+1) << " ===" << std::endl;
+                std::cout << "Ray origin: (" << cachedPointData.positions[i].x << ", " << cachedPointData.positions[i].y << ", " << cachedPointData.positions[i].z << ")" << std::endl;
+                
+                if (h_results[i].hit) {
+                    std::cout << "Point is INSIDE a polygon (ray entering back face)" << std::endl;
+                    std::cout << "  Distance to closest surface: " << h_results[i].t << std::endl;
+                    std::cout << "  Hit point: (" << h_results[i].hit_point.x << ", " << h_results[i].hit_point.y << ", " << h_results[i].hit_point.z << ")" << std::endl;
+                    std::cout << "  Polygon index: " << h_results[i].polygon_index << std::endl;
+                } else {
+                    std::cout << "Point is OUTSIDE all polygons (no hit or ray entering front face)" << std::endl;
+                }
+            }
+        } else {
+            std::cout << "\n=== Ray tracing completed for " << numRays << " rays ===" << std::endl;
+            std::cout << "Results are not displayed due to large number of rays." << std::endl;
+        }
+
+        if (exportResults) {
+            std::cout << "Exporting results" << std::endl;
+            std::ofstream csvFile("ray_results.csv");
+            csvFile << "pointId,polygonId\n";
+            for (int i = 0; i < numRays; ++i) {
+                int objectId = -1;
+                if (h_results[i].hit) {
+                    objectId = h_results[i].polygon_index;
+                }
+                csvFile << i << "," << objectId << "\n";
+            }
+            csvFile.close();
+        } else {
+            std::cout << "Skipping export of results (disabled by flag)" << std::endl;
+        }
+    } // End of task loop
+
+    timer.next("Cleanup");
+    
+    // Free cached GPU memory
+    if (d_results) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_results)));
+    if (d_ray_origins) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_ray_origins)));
+    if (d_triangle_to_object) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_triangle_to_object)));
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_lp)));
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg)));
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_ms)));
+    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_hg)));
+    if (d_gasOutput) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
+    if (d_vertices) CUDA_CHECK(cudaFree(d_vertices));
+    if (d_indices) CUDA_CHECK(cudaFree(d_indices));
+    if (d_normals) CUDA_CHECK(cudaFree(d_normals));
+
+    optixPipelineDestroy(pipeline);
+    optixProgramGroupDestroy(raygenPG);
+    optixProgramGroupDestroy(missPG);
+    optixProgramGroupDestroy(hitPG);
+    optixModuleDestroy(module);
+    optixDeviceContextDestroy(context);
+    
+    timer.finish(outputJsonPath);
+    
+    std::cout << std::endl;
+    std::cout << "Total tasks processed: " << numTasks << std::endl;
+    
+    if (numberOfRuns > 1) {
+        std::cout << "Number of runs per task: " << numberOfRuns << std::endl;
+    }
+    
+    if (!cachedGeometry.vertices.empty()) {
+        std::cout << "Final geometry: " << cachedGeometry.vertices.size() << " vertices, " << cachedGeometry.indices.size() << " triangles" << std::endl;
+    }
+
+    return 0;
+} 

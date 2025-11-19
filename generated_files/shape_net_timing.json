@@ -1,40 +1,92 @@
 {
   "phases": {
     "Data Reading": {
-      "duration_us": 25069635,
-      "duration_ms": 25069.63
+      "duration_us": 945,
+      "duration_ms": 0.94
     },
     "Application Creation": {
-      "duration_us": 356637,
-      "duration_ms": 356.64
-    },
-    "Initialization": {
-      "duration_us": 4445,
-      "duration_ms": 4.45
-    },
-    "Build Index": {
-      "duration_us": 5329,
-      "duration_ms": 5.33
+      "duration_us": 251834,
+      "duration_ms": 251.83
     },
     "Module and Pipeline Setup": {
-      "duration_us": 62187,
-      "duration_ms": 62.19
+      "duration_us": 27563,
+      "duration_ms": 27.56
+    },
+    "Load Geometry": {
+      "duration_us": 429573,
+      "duration_ms": 429.57
+    },
+    "Upload Geometry": {
+      "duration_us": 314,
+      "duration_ms": 0.31
+    },
+    "Build Index": {
+      "duration_us": 1584,
+      "duration_ms": 1.58
+    },
+    "Load Points": {
+      "duration_us": 124423909,
+      "duration_ms": 124423.91
+    },
+    "Upload Points": {
+      "duration_us": 123242,
+      "duration_ms": 123.24
     },
     "Query": {
-      "duration_us": 8685,
-      "duration_ms": 8.69
+      "duration_us": 137134,
+      "duration_ms": 137.13
     },
     "Output": {
-      "duration_us": 4339870,
-      "duration_ms": 4339.87
+      "duration_us": 377216,
+      "duration_ms": 377.22
+    },
+    "Load Geometry": {
+      "duration_us": 3186,
+      "duration_ms": 3.19
+    },
+    "Upload Geometry": {
+      "duration_us": 220,
+      "duration_ms": 0.22
+    },
+    "Build Index": {
+      "duration_us": 563,
+      "duration_ms": 0.56
+    },
+    "Query": {
+      "duration_us": 46668,
+      "duration_ms": 46.67
+    },
+    "Output": {
+      "duration_us": 299488,
+      "duration_ms": 299.49
+    },
+    "Load Geometry": {
+      "duration_us": 2118,
+      "duration_ms": 2.12
+    },
+    "Upload Geometry": {
+      "duration_us": 201,
+      "duration_ms": 0.20
+    },
+    "Build Index": {
+      "duration_us": 541,
+      "duration_ms": 0.54
+    },
+    "Query": {
+      "duration_us": 54566,
+      "duration_ms": 54.57
+    },
+    "Output": {
+      "duration_us": 311402,
+      "duration_ms": 311.40
     },
     "Cleanup": {
-      "duration_us": 22142,
-      "duration_ms": 22.14
+      "duration_us": 26480,
+      "duration_ms": 26.48
     }
   },
   "total": {
-    "duration_us": 29868952,
-    "duration_ms": 29868.95
+    "duration_us": 126518796,
+    "duration_ms": 126518.80
   }
 }

@@ -48,7 +48,8 @@ include(cmake/nvcuda_compile_module.cmake)
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(CUDA_SOURCES ${SRC_DIR}/raytracing.cu)
-set(CPP_SOURCE   ${SRC_DIR}/main.cpp)
+set(CPP_SOURCE   ${SRC_DIR}/rayspace.cpp)
+set(FILTER_REFINE_SOURCE ${SRC_DIR}/rayspace_filter_refine.cpp)
 ## Removed legacy dataset_loader.cpp
 set(TRIANGULATE_SOURCE ${SRC_DIR}/triangulate_dataset.cpp)
 set(TRIANGULATION_LIB_SOURCE ${SRC_DIR}/triangulation.cpp)
@@ -84,6 +85,8 @@ NVCUDA_COMPILE_MODULE(
 
 add_executable(raytracer ${CPP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
+add_executable(raytracer_filter_refine ${FILTER_REFINE_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
+
 add_executable(triangulate_single_polygon ${TRIANGULATE_SINGLE_SOURCE} ${TRIANGULATION_LIB_SOURCE})
 
 add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
@@ -91,6 +94,14 @@ add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${TRIANGULATION_LIB_SOURC
 # Platform-specific include directories
 if(WIN32)
     target_include_directories(raytracer PRIVATE 
+        ${CUDA_INCLUDE_DIRS} 
+        ${OptiX_INCLUDE} 
+        ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
+        ${DATASET_RUNTIME_DIR}
+        C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
+
+    target_include_directories(raytracer_filter_refine PRIVATE 
         ${CUDA_INCLUDE_DIRS} 
         ${OptiX_INCLUDE} 
         ${SRC_DIR}
@@ -110,6 +121,14 @@ if(WIN32)
         C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
 else()
     target_include_directories(raytracer PRIVATE 
+        ${CUDA_INCLUDE_DIRS} 
+        ${OptiX_INCLUDE} 
+        ${SRC_DIR}
+        ${DATASET_COMMON_DIR}
+        ${DATASET_RUNTIME_DIR}
+        ${Boost_INCLUDE_DIRS})
+
+    target_include_directories(raytracer_filter_refine PRIVATE 
         ${CUDA_INCLUDE_DIRS} 
         ${OptiX_INCLUDE} 
         ${SRC_DIR}
@@ -132,14 +151,17 @@ endif()
 set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
 add_custom_target(copy_ptx DEPENDS ${PTX_FILES})
 add_dependencies(raytracer copy_ptx)
+add_dependencies(raytracer_filter_refine copy_ptx)
 
 # OptiX host functions are loaded through the stub headers at runtime, so linking the explicit
 # OptiX libraries is unnecessary and breaks the build when those import libraries are not found.
 # RayJoin works without that explicit linkage, so mirror the same approach here.
 target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUDA_LIBRARY} CGAL::CGAL tinyobjloader::tinyobjloader)
+target_link_libraries(raytracer_filter_refine PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUDA_LIBRARY} CGAL::CGAL tinyobjloader::tinyobjloader)
 
 # Define INCLUDE_OPTIX for raytracer only
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
+target_compile_definitions(raytracer_filter_refine PRIVATE INCLUDE_OPTIX)
 
 # Platform-specific linking for triangulate_single_polygon and preprocess_dataset
 if(WIN32)
@@ -152,6 +174,7 @@ else()
 endif()
 
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set_target_properties(raytracer_filter_refine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(triangulate_single_polygon PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(preprocess_dataset PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin) 
 

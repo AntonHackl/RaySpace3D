@@ -92,10 +92,11 @@ GeometryData PolygonDatasetLoader::load(const std::string& wktFilePath) {
     }
     std::cout << "Dataset converted to " << geometry.vertices.size() << " vertices and " << geometry.indices.size() << " triangles" << std::endl;
 
-    std::cout << "Computing vertex normals for z=0 plane polygons..." << std::endl;
-    geometry.normals.resize(geometry.vertices.size(), {0.0f, 0.0f, 0.0f});
+    std::cout << "Computing face normals for z=0 plane polygons..." << std::endl;
+    geometry.normals.resize(geometry.indices.size(), {0.0f, 0.0f, 0.0f});
 
-    for (const auto& triangle : geometry.indices) {
+    for (size_t tri_idx = 0; tri_idx < geometry.indices.size(); ++tri_idx) {
+        const uint3& triangle = geometry.indices[tri_idx];
         const float3& v0 = geometry.vertices[triangle.x];
         const float3& v1 = geometry.vertices[triangle.y];
         const float3& v2 = geometry.vertices[triangle.z];
@@ -108,15 +109,10 @@ GeometryData PolygonDatasetLoader::load(const std::string& wktFilePath) {
         float cross_z = edge1_x * edge2_y - edge1_y * edge2_x;
         float normal_z = (cross_z > 0.0f) ? 1.0f : -1.0f;
 
-        geometry.normals[triangle.x].z += normal_z;
-        geometry.normals[triangle.y].z += normal_z;
-        geometry.normals[triangle.z].z += normal_z;
+        geometry.normals[tri_idx] = {0.0f, 0.0f, normal_z};
     }
 
-    for (auto& normal : geometry.normals) {
-        normal.z = (normal.z > 0.0f) ? 1.0f : -1.0f;
-    }
-    std::cout << "Vertex normals computed (all pointing in +z or -z direction)." << std::endl;
+    std::cout << "Face normals computed (one per triangle, all pointing in +z or -z direction)." << std::endl;
 
     std::cout << "Using dataset triangles for raytracing acceleration structure" << std::endl;
     std::cout << "Geometry loaded: " << geometry.vertices.size() << " vertices, " << geometry.indices.size() << " triangles" << std::endl;

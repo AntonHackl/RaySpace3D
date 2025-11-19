@@ -7,10 +7,10 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/Debug/preprocess_dataset.exe",
             "args": [
-                "--dataset", "C:\\Users\\anton\\Documents\\Uni\\Hugging Face\\shapenet_data_uncompressed",
-                "--output-geometry", "${workspaceFolder}/generated_files/shape_net.txt",
-                "--output-timing", "${workspaceFolder}/preprocessing_shape_net.json",
-                "--shuffle"
+                // "--dataset", "C:\\Users\\anton\\Documents\\Uni\\Hugging Face\\shapenet_data_uncompressed",
+                "--dataset", "${workspaceFolder}/generated_files/Query/",
+                "--output-geometry", "${workspaceFolder}/generated_files/query.txt",
+                "--output-timing", "${workspaceFolder}/preprocessing_query.json"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -24,10 +24,29 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/Debug/raytracer.exe",
             "args": [
-                "--geometry", "${workspaceFolder}/generated_files/shape_net.txt",
-                "--points", "${workspaceFolder}/generated_files/shape_net_points_1000000.wkt",
+                "--geometry", "${workspaceFolder}/generated_files/shape_net.txt, ${workspaceFolder}/generated_files/query.txt, ${workspaceFolder}/generated_files/simple_test.txt",
+                "--points", "${workspaceFolder}/generated_files/uniform_points_10000000.wkt",
                 "--runs", "10",
-                "--output", "${workspaceFolder}/generated_files/shape_net_timing.json"
+                "--output", "${workspaceFolder}/generated_files/shape_net_timing.json",
+                "--no-export"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "CMake: build"
+        },
+        {
+            "name": "Launch OptiX Raytracer Filter-Refine",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/Debug/raytracer_filter_refine.exe",
+            "args": [
+                "--geometry", "${workspaceFolder}/generated_files/query.txt",
+                "--points", "${workspaceFolder}/generated_files/uniform_points_10000000.wkt",
+                "--runs", "10",
+                "--output", "${workspaceFolder}/generated_files/filter_refine_timing.json",
+                "--no-export"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -64,8 +83,11 @@
             "request": "launch",
             "program": "${workspaceFolder}/scripts/generate_points_in_bbox.py",
             "args": [
-                "${workspaceFolder}/generated_files/shape_net.txt",
-                "--num_points", "1000000"
+                "--min", "0", "0", "0",
+                "--max", "50", "50", "50",
+                "--num_points", "10000000",
+                "--output", "${workspaceFolder}/generated_files/uniform_points_10000000.wkt",
+                "--chunk-size", "10000000"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
@@ -79,6 +101,43 @@
                 "${workspaceFolder}/generated_files/shape_net.txt",
                 "--mode", "object_centers",
                 "--num_points", "1000"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Grid Query Benchmark (3x3x3)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/grid_query_benchmark.py",
+                "args": [
+                "--geometry", "${workspaceFolder}/generated_files/query.txt",
+                "--points", "${workspaceFolder}/generated_files/uniform_points_10000000.wkt",
+                "--bbox-min", "0", "0", "0",
+                "--bbox-max", "50", "50", "50",
+                "--raytracer", "${workspaceFolder}/build/bin/Debug/raytracer.exe",
+                "--output", "${workspaceFolder}/results/grid_benchmark_uniform_high_res.json",
+                "--runs", "5",
+                "--grid-size", "3", "3", "3"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "CMake: build"
+        },
+        {
+            "name": "Generate Diagonal Points",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/generate_diagonal_points.py",
+            "args": [
+                "--n", "10000000",
+                "--bbox", "0", "0", "50", "50",
+                "--zrange", "0", "50",
+                "--sigma", "0.10",
+                "--out", "${workspaceFolder}/generated_files/diagonal_points_10000000.wkt",
+                "--chunk", "2000000",
+                "--precision", "6",
+                "--plot"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"

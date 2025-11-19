@@ -2,5 +2,15 @@
 /build.bat
 *.wkt
 *.csv
+*.html
+*.ipynb_checkpoints
+*.png
+*.jpeg
+*.jpg
+*.obj
+*.mtl
 results_*.json
 *preprocessed*.json
+grid_benchmark_*.json
+*.txt
+!requirements.txt

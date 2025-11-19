@@ -1,0 +1,80 @@
+{
+  "phases": {
+    "data reading_1": {
+      "duration_us": 308,
+      "duration_ms": 0.31
+    },
+    "load geometry_1": {
+      "duration_us": 4402,
+      "duration_ms": 4.40
+    },
+    "load points_1": {
+      "duration_us": 128664706,
+      "duration_ms": 128664.71
+    },
+    "compute bounding box_1": {
+      "duration_us": 2244,
+      "duration_ms": 2.24
+    },
+    "create bbox geometry_1": {
+      "duration_us": 35,
+      "duration_ms": 0.04
+    },
+    "initialize optix_1": {
+      "duration_us": 343660,
+      "duration_ms": 343.66
+    },
+    "module and pipeline setup_1": {
+      "duration_us": 20945,
+      "duration_ms": 20.95
+    },
+    "upload bbox geometry_1": {
+      "duration_us": 51,
+      "duration_ms": 0.05
+    },
+    "build bbox index_1": {
+      "duration_us": 233,
+      "duration_ms": 0.23
+    },
+    "upload points for bbox filter_1": {
+      "duration_us": 26792,
+      "duration_ms": 26.79
+    },
+    "bbox filter query_1": {
+      "duration_us": 319160,
+      "duration_ms": 319.16
+    },
+    "upload query geometry_1": {
+      "duration_us": 242,
+      "duration_ms": 0.24
+    },
+    "build query index_1": {
+      "duration_us": 216,
+      "duration_ms": 0.22
+    },
+    "upload candidate points_1": {
+      "duration_us": 11259,
+      "duration_ms": 11.26
+    },
+    "warmup_1": {
+      "duration_us": 587,
+      "duration_ms": 0.59
+    },
+    "query_1": {
+      "duration_us": 7100,
+      "duration_ms": 7.10
+    },
+    "output_1": {
+      "duration_us": 103178,
+      "duration_ms": 103.18
+    },
+    "cleanup_1": {
+      "duration_us": 21852,
+      "duration_ms": 21.85
+    }
+  },
+  "total": {
+    "duration_us": 129527019,
+    "duration_ms": 129527.02
+  }
+}

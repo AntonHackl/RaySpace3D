@@ -28,6 +28,6 @@ struct GeometryData {
 };
 
 struct PointData {
-    std::vector<float3> positions; // Ray origins (x, y, z)
+    std::vector<float3> positions;
     size_t numPoints = 0;
 };

@@ -1,11 +1,21 @@
 #include "MeshDatasetLoader.h"
 
 #include <iostream>
+#include <map>
 
 #include "../common/Geometry.h"
 #include "../common/DatasetUtils.h"
 #include <tiny_obj_loader.h>
 #include <filesystem>
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/Surface_mesh.h>
+#include <CGAL/Polygon_mesh_processing/compute_normal.h>
+#include <CGAL/Polygon_mesh_processing/self_intersections.h>
+#include <CGAL/Polygon_mesh_processing/orientation.h>
+
+
+typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
+typedef CGAL::Surface_mesh<K::Point_3> Surface_mesh;
 
 GeometryData MeshDatasetLoader::load(const std::string& directoryPath) {
     GeometryData geometry;
@@ -39,10 +49,11 @@ GeometryData MeshDatasetLoader::load(const std::string& directoryPath) {
 
     int objectIndex = 0;
     int skippedFiles = 0;
+    int currentIndex = 0;
 
     for (const auto& objFile : objFiles) {
-        if (objectIndex >= 50) break; // Limit to first 50 objects
-        printProgressBar(objectIndex + 1, objFiles.size());
+        if (objectIndex >= 50) break;
+        printProgressBar(++currentIndex, objFiles.size());
 
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
@@ -63,65 +74,102 @@ GeometryData MeshDatasetLoader::load(const std::string& directoryPath) {
         }
         if (!allTriangulated) { skippedFiles++; continue; }
 
-        size_t vertexOffset = geometry.vertices.size();
-        for (size_t v = 0; v < attrib.vertices.size() / 3; v++) {
-            float3 vertex{attrib.vertices[3 * v + 0], attrib.vertices[3 * v + 1], attrib.vertices[3 * v + 2]};
-            geometry.vertices.push_back(vertex);
+        Surface_mesh mesh;
+        std::vector<Surface_mesh::Vertex_index> vertex_indices;
+        vertex_indices.reserve(attrib.vertices.size() / 3);
+        for (size_t v = 0; v < attrib.vertices.size() / 3; ++v) {
+            K::Point_3 p(attrib.vertices[3 * v + 0], attrib.vertices[3 * v + 1], attrib.vertices[3 * v + 2]);
+            vertex_indices.push_back(mesh.add_vertex(p));
         }
 
         for (const auto& shape : shapes) {
             size_t index_offset = 0;
-            for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
+            for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
                 int fv = shape.mesh.num_face_vertices[f];
-                if (fv == 3) {
-                    uint3 triangle{
-                        static_cast<unsigned int>(vertexOffset + shape.mesh.indices[index_offset + 0].vertex_index),
-                        static_cast<unsigned int>(vertexOffset + shape.mesh.indices[index_offset + 1].vertex_index),
-                        static_cast<unsigned int>(vertexOffset + shape.mesh.indices[index_offset + 2].vertex_index)
-                    };
-                    geometry.indices.push_back(triangle);
-                    geometry.triangleToObject.push_back(objectIndex);
-                }
+                if (fv != 3) { skippedFiles++; mesh.clear(); break; }
+                std::vector<Surface_mesh::Vertex_index> face_verts;
+                face_verts.push_back(vertex_indices[shape.mesh.indices[index_offset + 0].vertex_index]);
+                face_verts.push_back(vertex_indices[shape.mesh.indices[index_offset + 1].vertex_index]);
+                face_verts.push_back(vertex_indices[shape.mesh.indices[index_offset + 2].vertex_index]);
+                auto fdesc = mesh.add_face(face_verts);
+                (void)fdesc;
                 index_offset += fv;
             }
+            if (mesh.number_of_faces() == 0) break;
         }
+
+        mesh.collect_garbage();
+
+        if (mesh.number_of_faces() == 0) {
+            skippedFiles++;
+            continue;
+        }
+
+        if (!(CGAL::is_closed(mesh) && CGAL::is_valid_polygon_mesh(mesh))) {
+            skippedFiles++;
+            continue;
+        }
+        if (CGAL::Polygon_mesh_processing::does_self_intersect(mesh)) {
+            skippedFiles++;
+            continue;
+        }
+
+        try {
+            CGAL::Polygon_mesh_processing::orient_to_bound_a_volume(mesh);
+        } catch (const CGAL::Precondition_exception& /*e*/) {
+            skippedFiles++;
+            continue;
+        } catch (...) {
+            skippedFiles++;
+            continue;
+        }
+
+        mesh.collect_garbage();
+        auto fnormals = mesh.add_property_map<Surface_mesh::Face_index, K::Vector_3>("f:normals", CGAL::NULL_VECTOR).first;
+        CGAL::Polygon_mesh_processing::compute_face_normals(mesh, fnormals);
+
+        size_t vertexOffset = geometry.vertices.size();
+        for (auto v : mesh.vertices()) {
+            const K::Point_3& p = mesh.point(v);
+            geometry.vertices.push_back({static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())});
+        }
+
+        std::map<Surface_mesh::Vertex_index, unsigned int> vertex_map;
+        unsigned int idx = 0;
+        for (auto v : mesh.vertices()) {
+            vertex_map[v] = vertexOffset + idx++;
+        }
+
+        size_t startNormalIdx = geometry.normals.size();
+        for (auto f : mesh.faces()) {
+            std::vector<unsigned int> face_indices;
+            for (auto v : vertices_around_face(mesh.halfedge(f), mesh)) {
+                face_indices.push_back(vertex_map[v]);
+            }
+            if (face_indices.size() == 3) {
+                geometry.indices.push_back({face_indices[0], face_indices[1], face_indices[2]});
+                geometry.triangleToObject.push_back(objectIndex);
+                
+                const K::Vector_3& n = fnormals[f];
+                float length = static_cast<float>(std::sqrt(n.squared_length()));
+                if (length > 0.0f) {
+                    geometry.normals.push_back({
+                        static_cast<float>(n.x() / length),
+                        static_cast<float>(n.y() / length),
+                        static_cast<float>(n.z() / length)
+                    });
+                } else {
+                    geometry.normals.push_back({0.0f, 0.0f, 1.0f});
+                }
+            }
+        }
+
         objectIndex++;
     }
 
     geometry.totalTriangles = geometry.indices.size();
 
-    std::cout << "\nComputing vertex normals for mesh triangles..." << std::endl;
-    geometry.normals.resize(geometry.vertices.size(), {0.0f, 0.0f, 0.0f});
-
-    for (const auto& triangle : geometry.indices) {
-        const float3& v0 = geometry.vertices[triangle.x];
-        const float3& v1 = geometry.vertices[triangle.y];
-        const float3& v2 = geometry.vertices[triangle.z];
-
-        float3 edge1{v1.x - v0.x, v1.y - v0.y, v1.z - v0.z};
-        float3 edge2{v2.x - v0.x, v2.y - v0.y, v2.z - v0.z};
-        float3 face_normal{
-            edge1.y * edge2.z - edge1.z * edge2.y,
-            edge1.z * edge2.x - edge1.x * edge2.z,
-            edge1.x * edge2.y - edge1.y * edge2.x
-        };
-        geometry.normals[triangle.x].x += face_normal.x;
-        geometry.normals[triangle.x].y += face_normal.y;
-        geometry.normals[triangle.x].z += face_normal.z;
-        geometry.normals[triangle.y].x += face_normal.x;
-        geometry.normals[triangle.y].y += face_normal.y;
-        geometry.normals[triangle.y].z += face_normal.z;
-        geometry.normals[triangle.z].x += face_normal.x;
-        geometry.normals[triangle.z].y += face_normal.y;
-        geometry.normals[triangle.z].z += face_normal.z;
-    }
-
-    for (auto& normal : geometry.normals) {
-        float length = sqrtf(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
-        if (length > 0.0f) { normal.x /= length; normal.y /= length; normal.z /= length; }
-    }
-
-    std::cout << "Vertex normals computed by averaging face normals." << std::endl;
+    std::cout << "\nFace normals computed (one per triangle)." << std::endl;
     std::cout << "\n=== Mesh Loading Complete ===" << std::endl;
     std::cout << "Successfully loaded " << objectIndex << " .obj files" << std::endl;
     std::cout << "Skipped " << skippedFiles << " files" << std::endl;
