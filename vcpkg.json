@@ -1,0 +1,12 @@
+{
+  "name": "rayspace3d",
+  "version": "1.0.0",
+  "dependencies": [
+    "cgal",
+    "eigen3",
+    "gmp",
+    "mpfr",
+    "tinyobjloader"
+  ],
+  "builtin-baseline": "782419385291ae2db643c928314efe626853c702"
+}

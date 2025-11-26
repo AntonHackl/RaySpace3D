@@ -15,6 +15,7 @@
 #include <sstream>
 #include <algorithm>
 #include <limits>
+#include <cmath>
 #include "common.h"
 #include "dataset/common/Geometry.h"
 #include "dataset/runtime/GeometryIO.h"
@@ -604,11 +605,10 @@ int main(int argc, char* argv[])
         OPTIX_CHECK(optixLaunch(pipeline, 0, d_lp, sizeof(LaunchParams), &sbt, numRefineRays, 1, 1));
         CUDA_CHECK(cudaDeviceSynchronize());
     }
-
-    timer.next("Output");
+    timer.next("Download Results");
     std::vector<RayResult> h_results(numRefineRays);
     CUDA_CHECK(cudaMemcpy(h_results.data(), d_refine_results, numRefineRays * sizeof(RayResult), cudaMemcpyDeviceToHost));
-
+    timer.next("Output");
     // Map results back to original point indices
     std::vector<int> finalResults(totalPoints, -1); // -1 means outside
     

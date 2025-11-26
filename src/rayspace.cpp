@@ -37,8 +37,8 @@ static std::vector<std::string> splitPaths(const std::string& input) {
     return result;
 }
 
-constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
-// constexpr const char* ptxPath = "/root/media/Spatial_Data_Management/PipRay/build/raytracing.ptx";
+// constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
+constexpr const char* ptxPath = "/sc/home/anton.hackl/Spatial_Data_Management/RaySpace3D/build/raytracing.ptx";
 
 static std::vector<char> readPTX(const char* filename)
 {
@@ -451,9 +451,10 @@ int main(int argc, char* argv[])
             CUDA_CHECK(cudaDeviceSynchronize());
         }
 
-        timer.next("Output");
+        timer.next("Download Results");
         std::vector<RayResult> h_results(numRays);
         CUDA_CHECK(cudaMemcpy(h_results.data(), d_results, numRays * sizeof(RayResult), cudaMemcpyDeviceToHost));
+        timer.next("Output");
 
         size_t numHit = 0, numMiss = 0;
         for (int i = 0; i < numRays; ++i) {

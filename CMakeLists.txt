@@ -1,11 +1,14 @@
+
 cmake_minimum_required(VERSION 3.18)
 
-# Only use vcpkg on Windows
-if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE "C:/Users/anton/Documents/Uni/vcpkg/scripts/buildsystems/vcpkg.cmake")
+# Use vcpkg toolchain if available
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "${CMAKE_SOURCE_DIR}/../vcpkg/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/../vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 endif()
 
 project(OptiXSingleRay LANGUAGES CXX CUDA)
+
+cmake_policy(SET CMP0167 NEW)
 
 # Ensure all targets use the DLL version of the MSVC runtime (avoids CRT conflicts)
 if(MSVC)
@@ -23,21 +26,10 @@ if(WIN32)
     add_definitions(-DNOMINMAX)
 endif()
 
-# Find required packages
-if(WIN32)
-    # Windows: use vcpkg packages
-    find_package(Boost REQUIRED COMPONENTS geometry)
-    find_package(CGAL REQUIRED)
-    find_package(tinyobjloader CONFIG REQUIRED)
-else()
-    # Linux: use system packages
-    set(AE_DEPS_DIR "/root/media/PPoPPAE/deps")
-    list(APPEND CMAKE_PREFIX_PATH "${AE_DEPS_DIR}")
-    find_package(PkgConfig REQUIRED)
-    find_package(Boost REQUIRED COMPONENTS system filesystem)
-    find_package(CGAL REQUIRED)
-    find_package(tinyobjloader CONFIG REQUIRED)
-endif()
+# Find required packages (prefer vcpkg if available)
+find_package(Boost REQUIRED COMPONENTS filesystem system)
+find_package(CGAL REQUIRED)
+find_package(tinyobjloader CONFIG REQUIRED)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
@@ -92,86 +84,48 @@ add_executable(triangulate_single_polygon ${TRIANGULATE_SINGLE_SOURCE} ${TRIANGU
 add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
 # Platform-specific include directories
-if(WIN32)
-    target_include_directories(raytracer PRIVATE 
-        ${CUDA_INCLUDE_DIRS} 
-        ${OptiX_INCLUDE} 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        ${DATASET_RUNTIME_DIR}
-        C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
+target_include_directories(raytracer PRIVATE 
+    ${CUDA_INCLUDE_DIRS} 
+    ${OptiX_INCLUDE} 
+    ${SRC_DIR}
+    ${DATASET_COMMON_DIR}
+    ${DATASET_RUNTIME_DIR})
 
-    target_include_directories(raytracer_filter_refine PRIVATE 
-        ${CUDA_INCLUDE_DIRS} 
-        ${OptiX_INCLUDE} 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        ${DATASET_RUNTIME_DIR}
-        C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
+target_include_directories(raytracer_filter_refine PRIVATE 
+    ${CUDA_INCLUDE_DIRS} 
+    ${OptiX_INCLUDE} 
+    ${SRC_DIR}
+    ${DATASET_COMMON_DIR}
+    ${DATASET_RUNTIME_DIR})
 
-    target_include_directories(triangulate_single_polygon PRIVATE 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
-        
-    target_include_directories(preprocess_dataset PRIVATE 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        ${DATASET_PREPROCESS_DIR}
-        C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
-else()
-    target_include_directories(raytracer PRIVATE 
-        ${CUDA_INCLUDE_DIRS} 
-        ${OptiX_INCLUDE} 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        ${DATASET_RUNTIME_DIR}
-        ${Boost_INCLUDE_DIRS})
-
-    target_include_directories(raytracer_filter_refine PRIVATE 
-        ${CUDA_INCLUDE_DIRS} 
-        ${OptiX_INCLUDE} 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        ${DATASET_RUNTIME_DIR}
-        ${Boost_INCLUDE_DIRS})
-
-    target_include_directories(triangulate_single_polygon PRIVATE 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        ${Boost_INCLUDE_DIRS})
-        
-    target_include_directories(preprocess_dataset PRIVATE 
-        ${SRC_DIR}
-        ${DATASET_COMMON_DIR}
-        ${DATASET_PREPROCESS_DIR}
-        ${Boost_INCLUDE_DIRS})
-endif()
+target_include_directories(triangulate_single_polygon PRIVATE 
+    ${SRC_DIR}
+    ${DATASET_COMMON_DIR})
+    
+target_include_directories(preprocess_dataset PRIVATE 
+    ${SRC_DIR}
+    ${DATASET_COMMON_DIR}
+    ${DATASET_PREPROCESS_DIR})
 
 set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
 add_custom_target(copy_ptx DEPENDS ${PTX_FILES})
 add_dependencies(raytracer copy_ptx)
 add_dependencies(raytracer_filter_refine copy_ptx)
 
+
 # OptiX host functions are loaded through the stub headers at runtime, so linking the explicit
 # OptiX libraries is unnecessary and breaks the build when those import libraries are not found.
 # RayJoin works without that explicit linkage, so mirror the same approach here.
-target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUDA_LIBRARY} CGAL::CGAL tinyobjloader::tinyobjloader)
-target_link_libraries(raytracer_filter_refine PRIVATE ${CUDA_LIBRARIES} ${CUDA_CUDA_LIBRARY} CGAL::CGAL tinyobjloader::tinyobjloader)
+target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
+target_link_libraries(raytracer_filter_refine PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 
 # Define INCLUDE_OPTIX for raytracer only
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_filter_refine PRIVATE INCLUDE_OPTIX)
 
-# Platform-specific linking for triangulate_single_polygon and preprocess_dataset
-if(WIN32)
-    target_link_libraries(triangulate_single_polygon PRIVATE CGAL::CGAL)
-    target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader)
-else()
-    # Link Boost libraries on Linux
-    target_link_libraries(triangulate_single_polygon PRIVATE ${Boost_LIBRARIES} CGAL::CGAL)
-    target_link_libraries(preprocess_dataset PRIVATE ${Boost_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader)
-endif()
+# Linking for triangulate_single_polygon and preprocess_dataset
+target_link_libraries(triangulate_single_polygon PRIVATE CGAL::CGAL Boost::filesystem Boost::system)
+target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_filter_refine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
