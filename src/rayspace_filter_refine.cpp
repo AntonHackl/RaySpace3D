@@ -21,6 +21,7 @@
 #include "dataset/runtime/GeometryIO.h"
 #include "dataset/runtime/PointIO.h"
 #include "timer.h"
+#include "result_compaction.h"
 
 // Bounding box structure
 struct BoundingBox {
@@ -168,7 +169,7 @@ int main(int argc, char* argv[])
     float3 v6; v6.x = queryBBox.max.x; v6.y = queryBBox.max.y; v6.z = queryBBox.max.z; bboxVertices.push_back(v6); // 6
     float3 v7; v7.x = queryBBox.min.x; v7.y = queryBBox.max.y; v7.z = queryBBox.max.z; bboxVertices.push_back(v7); // 7
     
-    // 12 triangles forming the box (with outward-facing normals)
+    // 12 triangles forming the box (with outward-facing winding order)
     std::vector<uint3> bboxIndices;
     bboxIndices.reserve(12);
     // Bottom face (z = min)
@@ -189,32 +190,6 @@ int main(int argc, char* argv[])
     // Right face (x = max)
     uint3 t10; t10.x = 1; t10.y = 2; t10.z = 6; bboxIndices.push_back(t10);
     uint3 t11; t11.x = 1; t11.y = 6; t11.z = 5; bboxIndices.push_back(t11);
-    
-    // Compute normals for bbox triangles
-    std::vector<float3> bboxNormals;
-    bboxNormals.reserve(bboxIndices.size());
-    for (const auto& tri : bboxIndices) {
-        const float3& v0 = bboxVertices[tri.x];
-        const float3& v1 = bboxVertices[tri.y];
-        const float3& v2 = bboxVertices[tri.z];
-        float3 edge1;
-        edge1.x = v1.x - v0.x;
-        edge1.y = v1.y - v0.y;
-        edge1.z = v1.z - v0.z;
-        float3 edge2;
-        edge2.x = v2.x - v0.x;
-        edge2.y = v2.y - v0.y;
-        edge2.z = v2.z - v0.z;
-        float3 normal;
-        normal.x = edge1.y * edge2.z - edge1.z * edge2.y;
-        normal.y = edge1.z * edge2.x - edge1.x * edge2.z;
-        normal.z = edge1.x * edge2.y - edge1.y * edge2.x;
-        float len = sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
-        if (len > 0) {
-            normal.x /= len; normal.y /= len; normal.z /= len;
-        }
-        bboxNormals.push_back(normal);
-    }
     
     // Triangle to object mapping (all belong to object 0)
     std::vector<int> bboxTriangleToObject(bboxIndices.size(), 0);
@@ -323,17 +298,14 @@ int main(int argc, char* argv[])
     timer.next("Upload BBox Geometry");
     float3* d_bbox_vertices = nullptr;
     uint3* d_bbox_indices = nullptr;
-    float3* d_bbox_normals = nullptr;
     int* d_bbox_tri_to_obj = nullptr;
     
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_vertices), bboxVertices.size() * sizeof(float3)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_indices), bboxIndices.size() * sizeof(uint3)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_normals), bboxNormals.size() * sizeof(float3)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_tri_to_obj), bboxTriangleToObject.size() * sizeof(int)));
     
     CUDA_CHECK(cudaMemcpy(d_bbox_vertices, bboxVertices.data(), bboxVertices.size() * sizeof(float3), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_bbox_indices, bboxIndices.data(), bboxIndices.size() * sizeof(uint3), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_bbox_normals, bboxNormals.data(), bboxNormals.size() * sizeof(float3), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_bbox_tri_to_obj, bboxTriangleToObject.data(), bboxTriangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
     
     // Build acceleration structure for bbox
@@ -393,7 +365,6 @@ int main(int argc, char* argv[])
     LaunchParams bboxLp = {};
     bboxLp.handle = bboxGasHandle;
     bboxLp.ray_origins = d_bbox_ray_origins;
-    bboxLp.normals = d_bbox_normals;
     bboxLp.indices = d_bbox_indices;
     bboxLp.triangle_to_object = d_bbox_tri_to_obj;
     bboxLp.num_rays = numBBoxRays;
@@ -405,17 +376,36 @@ int main(int argc, char* argv[])
     OPTIX_CHECK(optixLaunch(pipeline, 0, d_lp, sizeof(LaunchParams), &sbt, numBBoxRays, 1, 1));
     CUDA_CHECK(cudaDeviceSynchronize());
     
-    // Retrieve bbox filter results
-    std::vector<RayResult> bboxResults(numBBoxRays);
-    CUDA_CHECK(cudaMemcpy(bboxResults.data(), d_bbox_results, numBBoxRays * sizeof(RayResult), cudaMemcpyDeviceToHost));
+    // Compact bbox filter results on GPU - only get hits
+    timer.next("Compact BBox Results");
     
-    // Filter points based on bbox results
+    // Count hits on GPU
+    int numBBoxHits = count_hits_gpu(d_bbox_results, numBBoxRays);
+    
+    // Download only bbox hits
+    std::vector<RayResult> bboxHits;
+    if (numBBoxHits > 0) {
+        bboxHits.resize(numBBoxHits);
+        // Allocate temporary GPU buffer for compacted results
+        RayResult* d_bbox_compact;
+        CUDA_CHECK(cudaMalloc(&d_bbox_compact, numBBoxHits * sizeof(RayResult)));
+        
+        // Compact on GPU
+        int actual_bbox_hits = 0;
+        compact_hits_gpu(d_bbox_results, d_bbox_compact, numBBoxRays, &actual_bbox_hits);
+        
+        // Download compacted results
+        CUDA_CHECK(cudaMemcpy(bboxHits.data(), d_bbox_compact, actual_bbox_hits * sizeof(RayResult), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaFree(d_bbox_compact));
+        
+        numBBoxHits = actual_bbox_hits;
+    }
+    
+    // Extract candidate indices from hits
     std::vector<int> candidateIndices;
-    candidateIndices.reserve(numBBoxRays);
-    for (size_t i = 0; i < static_cast<size_t>(numBBoxRays); ++i) {
-        if (bboxResults[i].hit) {
-            candidateIndices.push_back(static_cast<int>(i));
-        }
+    candidateIndices.reserve(bboxHits.size());
+    for (const auto& hit : bboxHits) {
+        candidateIndices.push_back(hit.ray_id);
     }
     
     size_t totalPoints = pointData.numPoints;
@@ -433,7 +423,6 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_results)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_ray_origins)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_tri_to_obj)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_normals)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_indices)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_vertices)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_gasOutput)));
@@ -474,18 +463,14 @@ int main(int argc, char* argv[])
     timer.next("Upload Query Geometry");
     float3* d_vertices = nullptr;
     uint3* d_indices = nullptr;
-    float3* d_normals = nullptr;
     int* d_triangle_to_object = nullptr;
     
     size_t vbytes = geometry.vertices.size() * sizeof(float3);
     size_t ibytes = geometry.indices.size() * sizeof(uint3);
-    size_t nbytes = geometry.normals.size() * sizeof(float3);
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices), vbytes));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices), ibytes));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_normals), nbytes));
     CUDA_CHECK(cudaMemcpy(d_vertices, geometry.vertices.data(), vbytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_indices, geometry.indices.data(), ibytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_normals, geometry.normals.data(), nbytes, cudaMemcpyHostToDevice));
     
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), geometry.triangleToObject.size() * sizeof(int)));
     CUDA_CHECK(cudaMemcpy(d_triangle_to_object, geometry.triangleToObject.data(), geometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
@@ -554,7 +539,6 @@ int main(int argc, char* argv[])
         LaunchParams refineLp = {};
         refineLp.handle = queryGasHandle;
         refineLp.ray_origins = d_refine_ray_origins;
-        refineLp.normals = d_normals;
         refineLp.indices = d_indices;
         refineLp.triangle_to_object = d_triangle_to_object;
         refineLp.num_rays = numRefineRays;
@@ -577,7 +561,6 @@ int main(int argc, char* argv[])
             LaunchParams refineLp = {};
             refineLp.handle = queryGasHandle;
             refineLp.ray_origins = d_refine_ray_origins;
-            refineLp.normals = d_normals;
             refineLp.indices = d_indices;
             refineLp.triangle_to_object = d_triangle_to_object;
             refineLp.num_rays = numRefineRays;
@@ -592,7 +575,6 @@ int main(int argc, char* argv[])
         LaunchParams refineLp = {};
         refineLp.handle = queryGasHandle;
         refineLp.ray_origins = d_refine_ray_origins;
-        refineLp.normals = d_normals;
         refineLp.indices = d_indices;
         refineLp.triangle_to_object = d_triangle_to_object;
         refineLp.num_rays = numRefineRays;
@@ -605,20 +587,38 @@ int main(int argc, char* argv[])
         OPTIX_CHECK(optixLaunch(pipeline, 0, d_lp, sizeof(LaunchParams), &sbt, numRefineRays, 1, 1));
         CUDA_CHECK(cudaDeviceSynchronize());
     }
+    timer.next("Compact Results");
+    // Count hits on GPU
+    int numHit = count_hits_gpu(d_refine_results, numRefineRays);
+    
     timer.next("Download Results");
-    std::vector<RayResult> h_results(numRefineRays);
-    CUDA_CHECK(cudaMemcpy(h_results.data(), d_refine_results, numRefineRays * sizeof(RayResult), cudaMemcpyDeviceToHost));
+    // Download only hits
+    std::vector<RayResult> h_refine_hits;
+    if (numHit > 0) {
+        h_refine_hits.resize(numHit);
+        // Allocate temporary GPU buffer for compacted results
+        RayResult* d_refine_compact;
+        CUDA_CHECK(cudaMalloc(&d_refine_compact, numHit * sizeof(RayResult)));
+        
+        // Compact on GPU
+        int actual_refine_hits = 0;
+        compact_hits_gpu(d_refine_results, d_refine_compact, numRefineRays, &actual_refine_hits);
+        
+        // Download compacted results
+        CUDA_CHECK(cudaMemcpy(h_refine_hits.data(), d_refine_compact, actual_refine_hits * sizeof(RayResult), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaFree(d_refine_compact));
+        
+        numHit = actual_refine_hits;
+    }
+    
     timer.next("Output");
     // Map results back to original point indices
     std::vector<int> finalResults(totalPoints, -1); // -1 means outside
     
-    size_t numHit = 0;
-    for (size_t i = 0; i < candidateCount; ++i) {
-        int originalIdx = candidateIndices[i];
-        if (h_results[i].hit) {
-            finalResults[originalIdx] = h_results[i].polygon_index;
-            ++numHit;
-        }
+    for (const auto& hit : h_refine_hits) {
+        // hit.ray_id is the index in candidateIndices array
+        int originalIdx = candidateIndices[hit.ray_id];
+        finalResults[originalIdx] = hit.polygon_index;
     }
     
     size_t numMiss = totalPoints - numHit;
@@ -633,19 +633,27 @@ int main(int argc, char* argv[])
               << (totalPoints > 0 ? (numHit * 100.0 / totalPoints) : 0.0) << "%)" << std::endl;
     std::cout << "Points OUTSIDE polygons: " << numMiss << " (" 
               << (totalPoints > 0 ? (numMiss * 100.0 / totalPoints) : 0.0) << "%)" << std::endl;
+    std::cout << "Memory saved: " << ((candidateCount - numHit) * sizeof(RayResult)) / (1024.0 * 1024.0) << " MB by not downloading candidate misses" << std::endl;
 
     if (candidateCount <= 100) {
         std::cout << "\n=== Ray Results (Candidates Only) ===" << std::endl;
+        // Create lookup for hits
+        std::vector<bool> candidateIsHit(candidateCount, false);
+        std::vector<RayResult> candidateHitLookup(candidateCount);
+        for (const auto& hit : h_refine_hits) {
+            candidateIsHit[hit.ray_id] = true;
+            candidateHitLookup[hit.ray_id] = hit;
+        }
+        
         for (size_t i = 0; i < candidateCount; ++i) {
             int originalIdx = candidateIndices[i];
             std::cout << "\n=== Candidate " << (i+1) << " (Original Point " << originalIdx << ") ===" << std::endl;
             std::cout << "Ray origin: (" << candidatePoints[i].x << ", " << candidatePoints[i].y << ", " << candidatePoints[i].z << ")" << std::endl;
             
-            if (h_results[i].hit) {
+            if (candidateIsHit[i]) {
+                const auto& result = candidateHitLookup[i];
                 std::cout << "Point is INSIDE a polygon (ray entering back face)" << std::endl;
-                std::cout << "  Distance to closest surface: " << h_results[i].t << std::endl;
-                std::cout << "  Hit point: (" << h_results[i].hit_point.x << ", " << h_results[i].hit_point.y << ", " << h_results[i].hit_point.z << ")" << std::endl;
-                std::cout << "  Polygon index: " << h_results[i].polygon_index << std::endl;
+                std::cout << "  Polygon index: " << result.polygon_index << std::endl;
             } else {
                 std::cout << "Point is OUTSIDE all polygons (no hit or ray entering front face)" << std::endl;
             }
@@ -653,13 +661,15 @@ int main(int argc, char* argv[])
     }
 
     if (exportResults) {
-        std::cout << "Exporting results" << std::endl;
+        std::cout << "Exporting results (hits only)" << std::endl;
         std::ofstream csvFile("ray_results.csv");
         csvFile << "pointId,polygonId\n";
-        for (size_t i = 0; i < totalPoints; ++i) {
-            csvFile << i << "," << finalResults[i] << "\n";
+        for (const auto& hit : h_refine_hits) {
+            int originalIdx = candidateIndices[hit.ray_id];
+            csvFile << originalIdx << "," << hit.polygon_index << "\n";
         }
         csvFile.close();
+        std::cout << "Exported " << numHit << " hit points (" << numMiss << " misses excluded)" << std::endl;
     } else {
         std::cout << "Skipping export of results (disabled by flag)" << std::endl;
     }
@@ -677,7 +687,6 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_query_gasOutput)));
     CUDA_CHECK(cudaFree(d_vertices));
     CUDA_CHECK(cudaFree(d_indices));
-    CUDA_CHECK(cudaFree(d_normals));
 
     optixPipelineDestroy(pipeline);
     optixProgramGroupDestroy(raygenPG);

@@ -40,11 +40,9 @@ extern "C" __global__ void __raygen__rg()
     float t = __uint_as_float(distance);
     int hit = hitFlag && isInside;
     
-    params.result[ray_id].hit = hit;
-    params.result[ray_id].hit_count = hit;
-    params.result[ray_id].t = hit ? t : 0.0f;
+    // Write only minimal result fields (ray_id, polygon_index)
+    params.result[ray_id].ray_id = ray_id;
     params.result[ray_id].polygon_index = hit ? static_cast<int>(params.triangle_to_object[triangleIndex]) : -1;
-    params.result[ray_id].hit_point = hit ? make_float3(orig.x + t * dir.x, orig.y + t * dir.y, orig.z + t * dir.z) : make_float3(0.0f, 0.0f, 0.0f);
 }
 
 extern "C" __global__ void __miss__ms()
@@ -60,15 +58,29 @@ extern "C" __global__ void __closesthit__ch()
     const float t = optixGetRayTmax();
     const unsigned int triangleIndex = optixGetPrimitiveIndex();
     
-    const float3 face_normal = params.normals[triangleIndex];
-    
-    const float3 ray_dir = optixGetWorldRayDirection();
-    const float dot_product = face_normal.x * ray_dir.x + face_normal.y * ray_dir.y + face_normal.z * ray_dir.z;
-    
-    const unsigned int isInside = dot_product > 0.0f;
+    // Use OptiX built-in backface detection based on winding order
+    const unsigned int isInside = optixIsBackFaceHit();
     
     optixSetPayload_0(1);
     optixSetPayload_1(__float_as_uint(t));
     optixSetPayload_2(triangleIndex);
     optixSetPayload_3(isInside);
+    
+    // If compact output is enabled and this is a hit from inside (backface)
+    if (isInside && params.compact_result != nullptr && params.hit_counter != nullptr) {
+        // Get ray information
+        const uint3 idx = optixGetLaunchIndex();
+        const uint3 dim = optixGetLaunchDimensions();
+        const int ray_id = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
+        
+        const float3 orig = params.ray_origins[ray_id];
+        const float3 dir = make_float3(0.0f, 0.0f, 1.0f);
+        
+        // Atomically get next available slot in compact array
+        int compact_idx = atomicAdd(params.hit_counter, 1);
+        
+        // Write minimal hit data directly to compact array
+        params.compact_result[compact_idx].ray_id = ray_id;
+        params.compact_result[compact_idx].polygon_index = static_cast<int>(params.triangle_to_object[triangleIndex]);
+    }
 } 

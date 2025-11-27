@@ -9,7 +9,8 @@
 				"${workspaceFolder}",
 				"-B",
 				"${workspaceFolder}/build",
-				"-DCMAKE_BUILD_TYPE=Debug"
+				"-DCMAKE_BUILD_TYPE=Debug",
+				"-DCMAKE_TOOLCHAIN_FILE=C:/Users/anton/Documents/Uni/vcpkg/scripts/buildsystems/vcpkg.cmake"
 			],
 			"group": "build",
 			"presentation": {
@@ -74,7 +75,8 @@
 				"${workspaceFolder}",
 				"-B",
 				"${workspaceFolder}/build",
-				"-DCMAKE_BUILD_TYPE=Debug"
+				"-DCMAKE_BUILD_TYPE=Debug",
+				"-DCMAKE_TOOLCHAIN_FILE=C:/Users/anton/Documents/Uni/vcpkg/scripts/buildsystems/vcpkg.cmake"
 			],
 			"group": "build"
 		}

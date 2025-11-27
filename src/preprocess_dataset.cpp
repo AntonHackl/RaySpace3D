@@ -29,14 +29,6 @@ void writeGeometryDataToFile(const GeometryData& geometry, const std::string& fi
     }
     oss << '\n';
 
-    oss << "normals: ";
-    for (size_t i = 0; i < geometry.normals.size(); ++i) {
-        const auto& n = geometry.normals[i];
-        oss << n.x << ' ' << n.y << ' ' << n.z;
-        if (i + 1 < geometry.normals.size()) oss << ' ';
-    }
-    oss << '\n';
-
     oss << "indices: ";
     for (size_t i = 0; i < geometry.indices.size(); ++i) {
         const auto& tri = geometry.indices[i];

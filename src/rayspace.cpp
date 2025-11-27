@@ -18,6 +18,7 @@
 #include "dataset/runtime/GeometryIO.h"
 #include "dataset/runtime/PointIO.h"
 #include "timer.h"
+#include "result_compaction.h"
 
 // Helper function to split comma-separated file paths
 static std::vector<std::string> splitPaths(const std::string& input) {
@@ -37,8 +38,8 @@ static std::vector<std::string> splitPaths(const std::string& input) {
     return result;
 }
 
-// constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
-constexpr const char* ptxPath = "/sc/home/anton.hackl/Spatial_Data_Management/RaySpace3D/build/raytracing.ptx";
+constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
+// constexpr const char* ptxPath = "/sc/home/anton.hackl/Spatial_Data_Management/RaySpace3D/build/raytracing.ptx";
 
 static std::vector<char> readPTX(const char* filename)
 {
@@ -262,7 +263,6 @@ int main(int argc, char* argv[])
     GeometryData cachedGeometry;
     float3* d_vertices = nullptr;
     uint3* d_indices = nullptr;
-    float3* d_normals = nullptr;
     int* d_triangle_to_object = nullptr;
     CUdeviceptr d_gasOutput = 0;
     OptixTraversableHandle gasHandle = 0;
@@ -271,6 +271,8 @@ int main(int argc, char* argv[])
     PointData cachedPointData;
     float3* d_ray_origins = nullptr;
     RayResult* d_results = nullptr;
+    RayResult* d_compact_results = nullptr;
+    int* d_hit_counter = nullptr;
     
     // Process each task
     for (size_t taskIdx = 0; taskIdx < numTasks; ++taskIdx) {
@@ -290,7 +292,6 @@ int main(int argc, char* argv[])
             // Free old geometry GPU memory
             if (d_vertices) CUDA_CHECK(cudaFree(d_vertices));
             if (d_indices) CUDA_CHECK(cudaFree(d_indices));
-            if (d_normals) CUDA_CHECK(cudaFree(d_normals));
             if (d_triangle_to_object) CUDA_CHECK(cudaFree(d_triangle_to_object));
             if (d_gasOutput) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
             
@@ -305,13 +306,10 @@ int main(int argc, char* argv[])
             timer.next("Upload Geometry");
             size_t vbytes = cachedGeometry.vertices.size() * sizeof(float3);
             size_t ibytes = cachedGeometry.indices.size() * sizeof(uint3);
-            size_t nbytes = cachedGeometry.normals.size() * sizeof(float3);
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices), vbytes));
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices), ibytes));
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_normals), nbytes));
             CUDA_CHECK(cudaMemcpy(d_vertices, cachedGeometry.vertices.data(), vbytes, cudaMemcpyHostToDevice));
             CUDA_CHECK(cudaMemcpy(d_indices, cachedGeometry.indices.data(), ibytes, cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(d_normals, cachedGeometry.normals.data(), nbytes, cudaMemcpyHostToDevice));
             
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), cachedGeometry.triangleToObject.size() * sizeof(int)));
             CUDA_CHECK(cudaMemcpy(d_triangle_to_object, cachedGeometry.triangleToObject.data(), cachedGeometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
@@ -365,6 +363,8 @@ int main(int argc, char* argv[])
             // Free old points GPU memory
             if (d_ray_origins) CUDA_CHECK(cudaFree(d_ray_origins));
             if (d_results) CUDA_CHECK(cudaFree(d_results));
+            if (d_compact_results) CUDA_CHECK(cudaFree(d_compact_results));
+            if (d_hit_counter) CUDA_CHECK(cudaFree(d_hit_counter));
             
             cachedPointData = loadPointDataset(currentPointsPath);
             if (cachedPointData.positions.empty()) {
@@ -383,6 +383,11 @@ int main(int argc, char* argv[])
             // Touch allocated device memory to ensure pages are resident and avoid
             // first-launch page faults. Also synchronize to ensure uploads complete.
             CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_results), 0, numRays * sizeof(RayResult)));
+            
+            // Allocate compact output buffers (worst case: all rays hit)
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_compact_results), numRays * sizeof(RayResult)));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hit_counter), sizeof(int)));
+            
             CUDA_CHECK(cudaDeviceSynchronize());
             
             std::cout << "Points loaded: " << numRays << std::endl;
@@ -395,14 +400,18 @@ int main(int argc, char* argv[])
         timer.next("Warmup");
         const int warmupRuns = 2;
         for (int warmup = 0; warmup < warmupRuns; ++warmup) {
+            // Reset hit counter for warmup
+            CUDA_CHECK(cudaMemset(d_hit_counter, 0, sizeof(int)));
+            
             LaunchParams lp = {};
             lp.handle = gasHandle;
             lp.ray_origins = d_ray_origins;
-            lp.normals = d_normals;
             lp.indices = d_indices;
             lp.triangle_to_object = d_triangle_to_object;
             lp.num_rays = numRays;
             lp.result = d_results;
+            lp.compact_result = d_compact_results;
+            lp.hit_counter = d_hit_counter;
             
             CUDA_CHECK(cudaMemcpy((void*)d_lp, &lp, sizeof(LaunchParams), cudaMemcpyHostToDevice));
             
@@ -419,14 +428,18 @@ int main(int argc, char* argv[])
             for (int run = 0; run < numberOfRuns; ++run) {
                 std::cout << "Run " << (run + 1) << "/" << numberOfRuns << std::endl;
                 
+                // Reset hit counter for each run
+                CUDA_CHECK(cudaMemset(d_hit_counter, 0, sizeof(int)));
+                
                 LaunchParams lp = {};
                 lp.handle = gasHandle;
                 lp.ray_origins = d_ray_origins;
-                lp.normals = d_normals;
                 lp.indices = d_indices;
                 lp.triangle_to_object = d_triangle_to_object;
                 lp.num_rays = numRays;
                 lp.result = d_results;
+                lp.compact_result = d_compact_results;
+                lp.hit_counter = d_hit_counter;
                 
                 CUDA_CHECK(cudaMemcpy((void*)d_lp, &lp, sizeof(LaunchParams), cudaMemcpyHostToDevice));
                 
@@ -434,14 +447,18 @@ int main(int argc, char* argv[])
                 CUDA_CHECK(cudaDeviceSynchronize());
             }
         } else {
+            // Reset hit counter
+            CUDA_CHECK(cudaMemset(d_hit_counter, 0, sizeof(int)));
+            
             LaunchParams lp = {};
             lp.handle = gasHandle;
             lp.ray_origins = d_ray_origins;
-            lp.normals = d_normals;
             lp.indices = d_indices;
             lp.triangle_to_object = d_triangle_to_object;
             lp.num_rays = numRays;
             lp.result = d_results;
+            lp.compact_result = d_compact_results;
+            lp.hit_counter = d_hit_counter;
             
             CUDA_CHECK(cudaMemcpy((void*)d_lp, &lp, sizeof(LaunchParams), cudaMemcpyHostToDevice));
             
@@ -452,34 +469,43 @@ int main(int argc, char* argv[])
         }
 
         timer.next("Download Results");
-        std::vector<RayResult> h_results(numRays);
-        CUDA_CHECK(cudaMemcpy(h_results.data(), d_results, numRays * sizeof(RayResult), cudaMemcpyDeviceToHost));
-        timer.next("Output");
-
-        size_t numHit = 0, numMiss = 0;
-        for (int i = 0; i < numRays; ++i) {
-            if (h_results[i].hit)
-                ++numHit;
-            else
-                ++numMiss;
+        // Download hit count from GPU
+        int numHit = 0;
+        CUDA_CHECK(cudaMemcpy(&numHit, d_hit_counter, sizeof(int), cudaMemcpyDeviceToHost));
+        size_t numMiss = numRays - numHit;
+        
+        // Download only compacted hits
+        std::vector<RayResult> h_hits;
+        if (numHit > 0) {
+            h_hits.resize(numHit);
+            CUDA_CHECK(cudaMemcpy(h_hits.data(), d_compact_results, numHit * sizeof(RayResult), cudaMemcpyDeviceToHost));
         }
+        timer.next("Output");
         std::cout << "\n=== Point-in-Polygon Summary ===" << std::endl;
         std::cout << "Total rays: " << numRays << std::endl;
         std::cout << "Points INSIDE polygons:  " << numHit << std::endl;
         std::cout << "Points OUTSIDE polygons: " << numMiss << std::endl;
         std::cout << "Inside ratio: " << (numRays > 0 ? (double)numHit / numRays * 100.0 : 0.0) << " %" << std::endl;
+        std::cout << "Memory saved: " << ((numRays - numHit) * sizeof(RayResult)) / (1024.0 * 1024.0) << " MB by not downloading misses" << std::endl;
 
         if (numRays <= 100) {
             std::cout << "\n=== Ray Results ===" << std::endl;
+            // Create a lookup for hits
+            std::vector<bool> isHit(numRays, false);
+            std::vector<RayResult> hitLookup(numRays);
+            for (const auto& hit : h_hits) {
+                isHit[hit.ray_id] = true;
+                hitLookup[hit.ray_id] = hit;
+            }
+            
             for (int i = 0; i < numRays; ++i) {
                 std::cout << "\n=== Ray " << (i+1) << " ===" << std::endl;
                 std::cout << "Ray origin: (" << cachedPointData.positions[i].x << ", " << cachedPointData.positions[i].y << ", " << cachedPointData.positions[i].z << ")" << std::endl;
-                
-                if (h_results[i].hit) {
+
+                if (isHit[i]) {
+                    const auto& result = hitLookup[i];
                     std::cout << "Point is INSIDE a polygon (ray entering back face)" << std::endl;
-                    std::cout << "  Distance to closest surface: " << h_results[i].t << std::endl;
-                    std::cout << "  Hit point: (" << h_results[i].hit_point.x << ", " << h_results[i].hit_point.y << ", " << h_results[i].hit_point.z << ")" << std::endl;
-                    std::cout << "  Polygon index: " << h_results[i].polygon_index << std::endl;
+                    std::cout << "  Polygon index: " << result.polygon_index << std::endl;
                 } else {
                     std::cout << "Point is OUTSIDE all polygons (no hit or ray entering front face)" << std::endl;
                 }
@@ -490,17 +516,14 @@ int main(int argc, char* argv[])
         }
 
         if (exportResults) {
-            std::cout << "Exporting results" << std::endl;
+            std::cout << "Exporting results (hits only)" << std::endl;
             std::ofstream csvFile("ray_results.csv");
             csvFile << "pointId,polygonId\n";
-            for (int i = 0; i < numRays; ++i) {
-                int objectId = -1;
-                if (h_results[i].hit) {
-                    objectId = h_results[i].polygon_index;
-                }
-                csvFile << i << "," << objectId << "\n";
+            for (const auto& hit : h_hits) {
+                csvFile << hit.ray_id << "," << hit.polygon_index << "\n";
             }
             csvFile.close();
+            std::cout << "Exported " << numHit << " hit points (" << numMiss << " misses excluded)" << std::endl;
         } else {
             std::cout << "Skipping export of results (disabled by flag)" << std::endl;
         }
@@ -510,6 +533,8 @@ int main(int argc, char* argv[])
     
     // Free cached GPU memory
     if (d_results) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_results)));
+    if (d_compact_results) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_compact_results)));
+    if (d_hit_counter) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_hit_counter)));
     if (d_ray_origins) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_ray_origins)));
     if (d_triangle_to_object) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_triangle_to_object)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_lp)));
@@ -519,7 +544,6 @@ int main(int argc, char* argv[])
     if (d_gasOutput) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
     if (d_vertices) CUDA_CHECK(cudaFree(d_vertices));
     if (d_indices) CUDA_CHECK(cudaFree(d_indices));
-    if (d_normals) CUDA_CHECK(cudaFree(d_normals));
 
     optixPipelineDestroy(pipeline);
     optixProgramGroupDestroy(raygenPG);

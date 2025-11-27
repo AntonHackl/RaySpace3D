@@ -24,7 +24,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/Debug/raytracer.exe",
             "args": [
-                "--geometry", "${workspaceFolder}/generated_files/shape_net.txt, ${workspaceFolder}/generated_files/query.txt, ${workspaceFolder}/generated_files/simple_test.txt",
+                "--geometry", "${workspaceFolder}/generated_files/query.txt",
                 "--points", "${workspaceFolder}/generated_files/uniform_points_10000000.wkt",
                 "--runs", "10",
                 "--output", "${workspaceFolder}/generated_files/shape_net_timing.json",

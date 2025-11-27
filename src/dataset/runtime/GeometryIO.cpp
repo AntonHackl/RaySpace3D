@@ -33,20 +33,6 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
     }
 
     if (std::getline(file, line)) {
-        if (line.rfind("normals:", 0) == 0) {
-            std::string normals_data = line.substr(8);
-            std::stringstream ss(normals_data);
-            float x, y, z;
-            while (ss >> x >> y >> z) {
-                geometry.normals.push_back({x, y, z});
-            }
-        } else {
-            std::cerr << "Error: Expected normals line second" << std::endl;
-            return GeometryData{};
-        }
-    }
-
-    if (std::getline(file, line)) {
         if (line.rfind("indices:", 0) == 0) {
             std::string indices_data = line.substr(8);
             std::stringstream ss(indices_data);
@@ -55,7 +41,7 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
                 geometry.indices.push_back({i1, i2, i3});
             }
         } else {
-            std::cerr << "Error: Expected indices line third" << std::endl;
+            std::cerr << "Error: Expected indices line second" << std::endl;
             return GeometryData{};
         }
     }
@@ -69,7 +55,7 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
                 geometry.triangleToObject.push_back(objectId);
             }
         } else {
-            std::cerr << "Error: Expected triangleToObject line fourth" << std::endl;
+            std::cerr << "Error: Expected triangleToObject line third" << std::endl;
             return GeometryData{};
         }
     }
@@ -80,7 +66,7 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
             std::stringstream ss(total_data);
             ss >> geometry.totalTriangles;
         } else {
-            std::cerr << "Error: Expected total_triangles line fifth" << std::endl;
+            std::cerr << "Error: Expected total_triangles line fourth" << std::endl;
             return GeometryData{};
         }
     }
@@ -89,7 +75,6 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
 
     std::cout << "Loaded preprocessed geometry:" << std::endl;
     std::cout << "  Total vertices: " << geometry.vertices.size() << std::endl;
-    std::cout << "  Total normals: " << geometry.normals.size() << std::endl;
     std::cout << "  Total triangles: " << geometry.indices.size() << std::endl;
     std::cout << "  Triangle-to-object mappings: " << geometry.triangleToObject.size() << std::endl;
     std::cout << "=============================\n" << std::endl;

@@ -40,6 +40,7 @@ include(cmake/nvcuda_compile_module.cmake)
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(CUDA_SOURCES ${SRC_DIR}/raytracing.cu)
+set(RESULT_COMPACTION_CUDA ${SRC_DIR}/result_compaction.cu)
 set(CPP_SOURCE   ${SRC_DIR}/rayspace.cpp)
 set(FILTER_REFINE_SOURCE ${SRC_DIR}/rayspace_filter_refine.cpp)
 ## Removed legacy dataset_loader.cpp
@@ -75,9 +76,9 @@ NVCUDA_COMPILE_MODULE(
     NVCC_OPTIONS  "${OPTIX_PROGRAM_TARGET}" "--gpu-architecture=sm_75" "--relocatable-device-code=true" "--expt-relaxed-constexpr" "-I${OptiX_INCLUDE}"
 )
 
-add_executable(raytracer ${CPP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
+add_executable(raytracer ${CPP_SOURCE} ${RESULT_COMPACTION_CUDA} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
-add_executable(raytracer_filter_refine ${FILTER_REFINE_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
+add_executable(raytracer_filter_refine ${FILTER_REFINE_SOURCE} ${RESULT_COMPACTION_CUDA} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
 add_executable(triangulate_single_polygon ${TRIANGULATE_SINGLE_SOURCE} ${TRIANGULATION_LIB_SOURCE})
 

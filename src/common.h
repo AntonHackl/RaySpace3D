@@ -14,12 +14,8 @@ struct HitGroupData {
 };
 
 struct RayResult {
-    int hit;           
-    float t;            
-    float3 hit_point;  
-    float2 barycentrics;
-    int polygon_index;
-    int hit_count;
+    int ray_id;        // Original ray index for mapping back to point
+    int polygon_index; // Polygon that was hit (-1 for miss)
 };
 
 struct LaunchParams {
@@ -29,8 +25,11 @@ struct LaunchParams {
     RayResult* result;
 
     float3* ray_origins;
-    float3* normals;
     uint3* indices;
     int* triangle_to_object;
     int num_rays;
+    
+    // For direct GPU-side compaction during ray tracing
+    RayResult* compact_result;  // Output buffer for hits only
+    int* hit_counter;           // Atomic counter for compact array index
 };

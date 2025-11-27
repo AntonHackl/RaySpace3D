@@ -21,7 +21,6 @@ struct uint3 {
 
 struct GeometryData {
     std::vector<float3> vertices;
-    std::vector<float3> normals;
     std::vector<uint3> indices;
     std::vector<int> triangleToObject;
     size_t totalTriangles = 0;
