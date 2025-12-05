@@ -16,12 +16,19 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <limits.h>
+#endif
 #include "common.h"
 #include "dataset/common/Geometry.h"
 #include "dataset/runtime/GeometryIO.h"
 #include "dataset/runtime/PointIO.h"
 #include "timer.h"
 #include "result_compaction.h"
+#include "ptx_utils.h"
 
 // Bounding box structure
 struct BoundingBox {
@@ -42,8 +49,6 @@ struct BoundingBox {
         max.z = std::max(max.z, point.z);
     }
 };
-
-constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
 
 static std::vector<char> readPTX(const char* filename)
 {
@@ -67,6 +72,7 @@ int main(int argc, char* argv[])
     std::string geometryFilePath = "";
     std::string pointDatasetPath = "";
     std::string outputJsonPath = "performance_timing_filter_refine.json";
+    std::string ptxPath = detectPTXPath();  // Auto-detected PTX path (overridable via CLI)
     int numberOfRuns = 1;
     bool exportResults = true;
     int warmupRuns = 2;
@@ -92,8 +98,11 @@ int main(int argc, char* argv[])
             else if (arg == "--no-export") {
                 exportResults = false;
             }
+            else if (arg == "--ptx" && i + 1 < argc) {
+                ptxPath = argv[++i];
+            }
             else if (arg == "--help" || arg == "-h") {
-                std::cout << "Usage: " << argv[0] << " [--geometry <path>] [--points <path>] [--output <json_output_file>] [--runs <number>]" << std::endl;
+                std::cout << "Usage: " << argv[0] << " [--geometry <path>] [--points <path>] [--output <json_output_file>] [--runs <number>] [--ptx <ptx_file>]" << std::endl;
                 std::cout << "Options:" << std::endl;
                 std::cout << "  --geometry <path>     Path to preprocessed geometry text file." << std::endl;
                 std::cout << "  --points <path>       Path to WKT file containing POINT geometries." << std::endl;
@@ -101,6 +110,7 @@ int main(int argc, char* argv[])
                 std::cout << "  --runs <number>       Number of times to run the query (for performance testing)" << std::endl;
                 std::cout << "  --warmup-runs <num>   Number of warmup runs (default: 2)" << std::endl;
                 std::cout << "  --no-export           Disable CSV export of results" << std::endl;
+                std::cout << "  --ptx <ptx_file>      Path to compiled PTX file (default: ./raytracing.ptx)" << std::endl;
                 std::cout << "  --help, -h            Show this help message" << std::endl;
                 std::cout << "\nThis program implements a filter-refine approach:" << std::endl;
                 std::cout << "  1. Filter: Test points against query geometry bounding box" << std::endl;
@@ -123,7 +133,6 @@ int main(int argc, char* argv[])
     }
     
     // Load geometry
-    timer.next("Load Geometry");
     std::cout << "Loading geometry from: " << geometryFilePath << std::endl;
     GeometryData geometry = loadGeometryFromFile(geometryFilePath);
     if (geometry.vertices.empty()) {
@@ -134,7 +143,6 @@ int main(int argc, char* argv[])
               << geometry.indices.size() << " triangles" << std::endl;
     
     // Load points
-    timer.next("Load Points");
     std::cout << "Loading points from: " << pointDatasetPath << std::endl;
     PointData pointData = loadPointDataset(pointDatasetPath);
     if (pointData.positions.empty()) {
@@ -143,67 +151,18 @@ int main(int argc, char* argv[])
     }
     std::cout << "Points loaded: " << pointData.numPoints << std::endl;
     
-    // PHASE 1: FILTER - Compute bounding box of query geometry
-    timer.next("Compute Bounding Box");
-    std::cout << "\n=== PHASE 1: FILTER (Bounding Box via Ray Tracing) ===" << std::endl;
-
-    BoundingBox queryBBox;
-    for (const auto& vertex : geometry.vertices) {
-        queryBBox.expand(vertex);
-    }
+    timer.next("Application Creation");
     
-    std::cout << "Query bounding box computed:" << std::endl;
-    std::cout << "  Min: (" << queryBBox.min.x << ", " << queryBBox.min.y << ", " << queryBBox.min.z << ")" << std::endl;
-    std::cout << "  Max: (" << queryBBox.max.x << ", " << queryBBox.max.y << ", " << queryBBox.max.z << ")" << std::endl;
-
-    // Create bounding box geometry (8 vertices, 12 triangles forming a box)
-    timer.next("Create BBox Geometry");
-    std::vector<float3> bboxVertices;
-    bboxVertices.reserve(8);
-    float3 v0; v0.x = queryBBox.min.x; v0.y = queryBBox.min.y; v0.z = queryBBox.min.z; bboxVertices.push_back(v0); // 0
-    float3 v1; v1.x = queryBBox.max.x; v1.y = queryBBox.min.y; v1.z = queryBBox.min.z; bboxVertices.push_back(v1); // 1
-    float3 v2; v2.x = queryBBox.max.x; v2.y = queryBBox.max.y; v2.z = queryBBox.min.z; bboxVertices.push_back(v2); // 2
-    float3 v3; v3.x = queryBBox.min.x; v3.y = queryBBox.max.y; v3.z = queryBBox.min.z; bboxVertices.push_back(v3); // 3
-    float3 v4; v4.x = queryBBox.min.x; v4.y = queryBBox.min.y; v4.z = queryBBox.max.z; bboxVertices.push_back(v4); // 4
-    float3 v5; v5.x = queryBBox.max.x; v5.y = queryBBox.min.y; v5.z = queryBBox.max.z; bboxVertices.push_back(v5); // 5
-    float3 v6; v6.x = queryBBox.max.x; v6.y = queryBBox.max.y; v6.z = queryBBox.max.z; bboxVertices.push_back(v6); // 6
-    float3 v7; v7.x = queryBBox.min.x; v7.y = queryBBox.max.y; v7.z = queryBBox.max.z; bboxVertices.push_back(v7); // 7
-    
-    // 12 triangles forming the box (with outward-facing winding order)
-    std::vector<uint3> bboxIndices;
-    bboxIndices.reserve(12);
-    // Bottom face (z = min)
-    uint3 t0; t0.x = 0; t0.y = 2; t0.z = 1; bboxIndices.push_back(t0);
-    uint3 t1; t1.x = 0; t1.y = 3; t1.z = 2; bboxIndices.push_back(t1);
-    // Top face (z = max)
-    uint3 t2; t2.x = 4; t2.y = 5; t2.z = 6; bboxIndices.push_back(t2);
-    uint3 t3; t3.x = 4; t3.y = 6; t3.z = 7; bboxIndices.push_back(t3);
-    // Front face (y = min)
-    uint3 t4; t4.x = 0; t4.y = 1; t4.z = 5; bboxIndices.push_back(t4);
-    uint3 t5; t5.x = 0; t5.y = 5; t5.z = 4; bboxIndices.push_back(t5);
-    // Back face (y = max)
-    uint3 t6; t6.x = 3; t6.y = 6; t6.z = 2; bboxIndices.push_back(t6);
-    uint3 t7; t7.x = 3; t7.y = 7; t7.z = 6; bboxIndices.push_back(t7);
-    // Left face (x = min)
-    uint3 t8; t8.x = 0; t8.y = 4; t8.z = 7; bboxIndices.push_back(t8);
-    uint3 t9; t9.x = 0; t9.y = 7; t9.z = 3; bboxIndices.push_back(t9);
-    // Right face (x = max)
-    uint3 t10; t10.x = 1; t10.y = 2; t10.z = 6; bboxIndices.push_back(t10);
-    uint3 t11; t11.x = 1; t11.y = 6; t11.z = 5; bboxIndices.push_back(t11);
-    
-    // Triangle to object mapping (all belong to object 0)
-    std::vector<int> bboxTriangleToObject(bboxIndices.size(), 0);
-
     // Initialize OptiX
-    timer.next("Initialize OptiX");
     CUDA_CHECK(cudaFree(0));
     OPTIX_CHECK(optixInit());
     OptixDeviceContext context = nullptr;
     OPTIX_CHECK(optixDeviceContextCreate(0, nullptr, &context));
     
-    // Load PTX and create module
     timer.next("Module and Pipeline Setup");
-    std::vector<char> ptxData = readPTX(ptxPath);
+    
+    // Load PTX and create module
+    std::vector<char> ptxData = readPTX(ptxPath.c_str());
 
     OptixModuleCompileOptions moduleCompileOptions = {};
     moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
@@ -213,7 +172,7 @@ int main(int argc, char* argv[])
     OptixPipelineCompileOptions pipelineCompileOptions = {};
     pipelineCompileOptions.usesMotionBlur        = false;
     pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
-    pipelineCompileOptions.numPayloadValues      = 4;
+    pipelineCompileOptions.numPayloadValues      = 3;
     pipelineCompileOptions.numAttributeValues    = 2;
     pipelineCompileOptions.exceptionFlags        = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
@@ -294,8 +253,70 @@ int main(int argc, char* argv[])
     CUdeviceptr d_lp;
     CUDA_CHECK(cudaMalloc((void**)&d_lp,sizeof(LaunchParams)));
     
+    // Upload all points to GPU before filter phase
+    timer.next("Upload Points");
+    float3* d_bbox_ray_origins = nullptr;
+    RayResult* d_bbox_results = nullptr;
+    
+    const int numBBoxRays = static_cast<int>(pointData.numPoints);
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_ray_origins), numBBoxRays * sizeof(float3)));
+    CUDA_CHECK(cudaMemcpy(d_bbox_ray_origins, pointData.positions.data(), numBBoxRays * sizeof(float3), cudaMemcpyHostToDevice));
+    
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_results), numBBoxRays * sizeof(RayResult)));
+    CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_bbox_results), 0, numBBoxRays * sizeof(RayResult)));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    
+    // PHASE 1: FILTER - Compute bounding box of query geometry
+    timer.next("Filter");
+    std::cout << "\n=== PHASE 1: FILTER (Bounding Box via Ray Tracing) ===" << std::endl;
+
+    BoundingBox queryBBox;
+    for (const auto& vertex : geometry.vertices) {
+        queryBBox.expand(vertex);
+    }
+    
+    std::cout << "Query bounding box computed:" << std::endl;
+    std::cout << "  Min: (" << queryBBox.min.x << ", " << queryBBox.min.y << ", " << queryBBox.min.z << ")" << std::endl;
+    std::cout << "  Max: (" << queryBBox.max.x << ", " << queryBBox.max.y << ", " << queryBBox.max.z << ")" << std::endl;
+
+    // Create bounding box geometry (8 vertices, 12 triangles forming a box)
+    std::vector<float3> bboxVertices;
+    bboxVertices.reserve(8);
+    float3 v0; v0.x = queryBBox.min.x; v0.y = queryBBox.min.y; v0.z = queryBBox.min.z; bboxVertices.push_back(v0); // 0
+    float3 v1; v1.x = queryBBox.max.x; v1.y = queryBBox.min.y; v1.z = queryBBox.min.z; bboxVertices.push_back(v1); // 1
+    float3 v2; v2.x = queryBBox.max.x; v2.y = queryBBox.max.y; v2.z = queryBBox.min.z; bboxVertices.push_back(v2); // 2
+    float3 v3; v3.x = queryBBox.min.x; v3.y = queryBBox.max.y; v3.z = queryBBox.min.z; bboxVertices.push_back(v3); // 3
+    float3 v4; v4.x = queryBBox.min.x; v4.y = queryBBox.min.y; v4.z = queryBBox.max.z; bboxVertices.push_back(v4); // 4
+    float3 v5; v5.x = queryBBox.max.x; v5.y = queryBBox.min.y; v5.z = queryBBox.max.z; bboxVertices.push_back(v5); // 5
+    float3 v6; v6.x = queryBBox.max.x; v6.y = queryBBox.max.y; v6.z = queryBBox.max.z; bboxVertices.push_back(v6); // 6
+    float3 v7; v7.x = queryBBox.min.x; v7.y = queryBBox.max.y; v7.z = queryBBox.max.z; bboxVertices.push_back(v7); // 7
+    
+    // 12 triangles forming the box (with outward-facing winding order)
+    std::vector<uint3> bboxIndices;
+    bboxIndices.reserve(12);
+    // Bottom face (z = min)
+    uint3 t0; t0.x = 0; t0.y = 2; t0.z = 1; bboxIndices.push_back(t0);
+    uint3 t1; t1.x = 0; t1.y = 3; t1.z = 2; bboxIndices.push_back(t1);
+    // Top face (z = max)
+    uint3 t2; t2.x = 4; t2.y = 5; t2.z = 6; bboxIndices.push_back(t2);
+    uint3 t3; t3.x = 4; t3.y = 6; t3.z = 7; bboxIndices.push_back(t3);
+    // Front face (y = min)
+    uint3 t4; t4.x = 0; t4.y = 1; t4.z = 5; bboxIndices.push_back(t4);
+    uint3 t5; t5.x = 0; t5.y = 5; t5.z = 4; bboxIndices.push_back(t5);
+    // Back face (y = max)
+    uint3 t6; t6.x = 3; t6.y = 6; t6.z = 2; bboxIndices.push_back(t6);
+    uint3 t7; t7.x = 3; t7.y = 7; t7.z = 6; bboxIndices.push_back(t7);
+    // Left face (x = min)
+    uint3 t8; t8.x = 0; t8.y = 4; t8.z = 7; bboxIndices.push_back(t8);
+    uint3 t9; t9.x = 0; t9.y = 7; t9.z = 3; bboxIndices.push_back(t9);
+    // Right face (x = max)
+    uint3 t10; t10.x = 1; t10.y = 2; t10.z = 6; bboxIndices.push_back(t10);
+    uint3 t11; t11.x = 1; t11.y = 6; t11.z = 5; bboxIndices.push_back(t11);
+    
+    // Triangle to object mapping (all belong to object 0)
+    std::vector<int> bboxTriangleToObject(bboxIndices.size(), 0);
+    
     // Upload bbox geometry to GPU
-    timer.next("Upload BBox Geometry");
     float3* d_bbox_vertices = nullptr;
     uint3* d_bbox_indices = nullptr;
     int* d_bbox_tri_to_obj = nullptr;
@@ -309,7 +330,6 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaMemcpy(d_bbox_tri_to_obj, bboxTriangleToObject.data(), bboxTriangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
     
     // Build acceleration structure for bbox
-    timer.next("Build BBox Index");
     CUdeviceptr d_bbox_vertices_ptr = reinterpret_cast<CUdeviceptr>(d_bbox_vertices);
     CUdeviceptr d_bbox_indices_ptr = reinterpret_cast<CUdeviceptr>(d_bbox_indices);
     
@@ -323,7 +343,7 @@ int main(int argc, char* argv[])
     bboxBuildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(bboxIndices.size());
     bboxBuildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     bboxBuildInput.triangleArray.indexStrideInBytes = sizeof(uint3);
-    unsigned int bbox_triangle_input_flags = OPTIX_GEOMETRY_FLAG_NONE;
+    unsigned int bbox_triangle_input_flags = OPTIX_GEOMETRY_FLAG_DISABLE_TRIANGLE_FACE_CULLING;
     bboxBuildInput.triangleArray.flags = &bbox_triangle_input_flags;
     bboxBuildInput.triangleArray.numSbtRecords = 1;
     
@@ -347,21 +367,7 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_bbox_tempBuffer)));
     CUDA_CHECK(cudaDeviceSynchronize());
     
-    // Upload all points for bbox filtering
-    timer.next("Upload Points for BBox Filter");
-    float3* d_bbox_ray_origins = nullptr;
-    RayResult* d_bbox_results = nullptr;
-    
-    const int numBBoxRays = static_cast<int>(pointData.numPoints);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_ray_origins), numBBoxRays * sizeof(float3)));
-    CUDA_CHECK(cudaMemcpy(d_bbox_ray_origins, pointData.positions.data(), numBBoxRays * sizeof(float3), cudaMemcpyHostToDevice));
-    
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_results), numBBoxRays * sizeof(RayResult)));
-    CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_bbox_results), 0, numBBoxRays * sizeof(RayResult)));
-    CUDA_CHECK(cudaDeviceSynchronize());
-    
     // Launch bbox filter
-    timer.next("BBox Filter Query");
     LaunchParams bboxLp = {};
     bboxLp.handle = bboxGasHandle;
     bboxLp.ray_origins = d_bbox_ray_origins;
@@ -377,8 +383,6 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaDeviceSynchronize());
     
     // Compact bbox filter results on GPU - only get hits
-    timer.next("Compact BBox Results");
-    
     // Count hits on GPU
     int numBBoxHits = count_hits_gpu(d_bbox_results, numBBoxRays);
     
@@ -456,11 +460,30 @@ int main(int argc, char* argv[])
     }
 
     // PHASE 2: REFINE - Exact raytracing for candidate points
+    timer.next("Upload Points");
     std::cout << "\n=== PHASE 2: REFINE (Exact Raytracing) ===" << std::endl;
     std::cout << "Processing " << candidateCount << " candidate points with raytracing..." << std::endl;
     
+    // Prepare candidate points for raytracing
+    std::vector<float3> candidatePoints;
+    candidatePoints.reserve(candidateCount);
+    for (int idx : candidateIndices) {
+        candidatePoints.push_back(pointData.positions[idx]);
+    }
+    
+    float3* d_refine_ray_origins = nullptr;
+    RayResult* d_refine_results = nullptr;
+    
+    const int numRefineRays = static_cast<int>(candidateCount);
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_refine_ray_origins), numRefineRays * sizeof(float3)));
+    CUDA_CHECK(cudaMemcpy(d_refine_ray_origins, candidatePoints.data(), numRefineRays * sizeof(float3), cudaMemcpyHostToDevice));
+    
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_refine_results), numRefineRays * sizeof(RayResult)));
+    CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_refine_results), 0, numRefineRays * sizeof(RayResult)));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    
     // Upload query geometry to GPU
-    timer.next("Upload Query Geometry");
+    timer.next("Upload Geometry");
     float3* d_vertices = nullptr;
     uint3* d_indices = nullptr;
     int* d_triangle_to_object = nullptr;
@@ -476,7 +499,7 @@ int main(int argc, char* argv[])
     CUDA_CHECK(cudaMemcpy(d_triangle_to_object, geometry.triangleToObject.data(), geometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
     
     // Build acceleration structure for query geometry
-    timer.next("Build Query Index");
+    timer.next("Build Index");
     CUdeviceptr d_vertices_ptr = reinterpret_cast<CUdeviceptr>(d_vertices);
     CUdeviceptr d_indices_ptr = reinterpret_cast<CUdeviceptr>(d_indices);
     
@@ -490,7 +513,7 @@ int main(int argc, char* argv[])
     queryBuildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(geometry.indices.size());
     queryBuildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     queryBuildInput.triangleArray.indexStrideInBytes = sizeof(uint3);
-    unsigned int query_triangle_input_flags = OPTIX_GEOMETRY_FLAG_NONE;
+    unsigned int query_triangle_input_flags = OPTIX_GEOMETRY_FLAG_DISABLE_TRIANGLE_FACE_CULLING;
     queryBuildInput.triangleArray.flags = &query_triangle_input_flags;
     queryBuildInput.triangleArray.numSbtRecords = 1;
     
@@ -512,25 +535,6 @@ int main(int argc, char* argv[])
                                  d_query_gasOutput, queryGasSizes.outputSizeInBytes, 
                                  &queryGasHandle, nullptr, 0));
     CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_query_tempBuffer)));
-    CUDA_CHECK(cudaDeviceSynchronize());
-    
-    // Prepare candidate points for raytracing
-    timer.next("Upload Candidate Points");
-    std::vector<float3> candidatePoints;
-    candidatePoints.reserve(candidateCount);
-    for (int idx : candidateIndices) {
-        candidatePoints.push_back(pointData.positions[idx]);
-    }
-    
-    float3* d_refine_ray_origins = nullptr;
-    RayResult* d_refine_results = nullptr;
-    
-    const int numRefineRays = static_cast<int>(candidateCount);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_refine_ray_origins), numRefineRays * sizeof(float3)));
-    CUDA_CHECK(cudaMemcpy(d_refine_ray_origins, candidatePoints.data(), numRefineRays * sizeof(float3), cudaMemcpyHostToDevice));
-    
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_refine_results), numRefineRays * sizeof(RayResult)));
-    CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_refine_results), 0, numRefineRays * sizeof(RayResult)));
     CUDA_CHECK(cudaDeviceSynchronize());
     
     // Warmup runs
@@ -587,11 +591,10 @@ int main(int argc, char* argv[])
         OPTIX_CHECK(optixLaunch(pipeline, 0, d_lp, sizeof(LaunchParams), &sbt, numRefineRays, 1, 1));
         CUDA_CHECK(cudaDeviceSynchronize());
     }
-    timer.next("Compact Results");
-    // Count hits on GPU
-    int numHit = count_hits_gpu(d_refine_results, numRefineRays);
     
     timer.next("Download Results");
+    // Count hits on GPU
+    int numHit = count_hits_gpu(d_refine_results, numRefineRays);
     // Download only hits
     std::vector<RayResult> h_refine_hits;
     if (numHit > 0) {

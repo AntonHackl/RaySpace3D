@@ -13,12 +13,19 @@
 #include <string>
 #include <chrono>
 #include <sstream>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <limits.h>
+#endif
 #include "common.h"
 #include "dataset/common/Geometry.h"
 #include "dataset/runtime/GeometryIO.h"
 #include "dataset/runtime/PointIO.h"
 #include "timer.h"
 #include "result_compaction.h"
+#include "ptx_utils.h"
 
 // Helper function to split comma-separated file paths
 static std::vector<std::string> splitPaths(const std::string& input) {
@@ -37,9 +44,6 @@ static std::vector<std::string> splitPaths(const std::string& input) {
     }
     return result;
 }
-
-constexpr const char* ptxPath = "C:/Users/anton/Documents/Uni/RaySpace3D/build/raytracing.ptx";
-// constexpr const char* ptxPath = "/sc/home/anton.hackl/Spatial_Data_Management/RaySpace3D/build/raytracing.ptx";
 
 static std::vector<char> readPTX(const char* filename)
 {
@@ -63,6 +67,7 @@ int main(int argc, char* argv[])
     std::string geometryFilePath = "";
     std::string pointDatasetPath = "";
     std::string outputJsonPath = "performance_timing.json";  // Default output file
+    std::string ptxPath = detectPTXPath();                   // Auto-detected PTX path (overridable via CLI)
     int numberOfRuns = 1;
     bool exportResults = true; // set to false with --no-export
     int warmupRuns = 2; // number of warmup launches before timed Query
@@ -79,6 +84,9 @@ int main(int argc, char* argv[])
             else if (arg == "--output" && i + 1 < argc) {
                 outputJsonPath = argv[++i];
             }
+            else if (arg == "--ptx" && i + 1 < argc) {
+                ptxPath = argv[++i];
+            }
             else if (arg == "--runs" && i + 1 < argc) {
                 numberOfRuns = std::atoi(argv[++i]);
             }
@@ -89,12 +97,13 @@ int main(int argc, char* argv[])
                 exportResults = false;
             }
             else if (arg == "--help" || arg == "-h") {
-                std::cout << "Usage: " << argv[0] << " [--geometry <path(s)>] [--points <path(s)>] [--output <json_output_file>] [--runs <number>]" << std::endl;
+                std::cout << "Usage: " << argv[0] << " [--geometry <path(s)>] [--points <path(s)>] [--output <json_output_file>] [--runs <number>] [--ptx <ptx_file>]" << std::endl;
                 std::cout << "Options:" << std::endl;
                 std::cout << "  --geometry <path(s)>  Path(s) to preprocessed geometry text file(s). Use commas to separate multiple files." << std::endl;
                 std::cout << "  --points <path(s)>    Path(s) to WKT file(s) containing POINT geometries. Use commas to separate multiple files." << std::endl;
                 std::cout << "  --output <path>       Path to JSON file for performance timing output" << std::endl;
                 std::cout << "  --runs <number>       Number of times to run the query (for performance testing)" << std::endl;
+                std::cout << "  --ptx <ptx_file>      Path to compiled PTX file (default: ./raytracing.ptx)" << std::endl;
                 std::cout << "  --help, -h            Show this help message" << std::endl;
                 std::cout << "\nList behavior:" << std::endl;
                 std::cout << "  - If one argument is a list and the other is single, the single item is used for all entries in the list." << std::endl;
@@ -147,8 +156,8 @@ int main(int argc, char* argv[])
     OPTIX_CHECK(optixDeviceContextCreate(0, nullptr, &context));
     
     timer.next("Module and Pipeline Setup");
-
-    std::vector<char> ptxData = readPTX(ptxPath);
+ 
+    std::vector<char> ptxData = readPTX(ptxPath.c_str());
     std::cout << "PTX file loaded successfully, size: " << ptxData.size() << " bytes" << std::endl;
 
     OptixModuleCompileOptions moduleCompileOptions = {};
@@ -159,7 +168,7 @@ int main(int argc, char* argv[])
     OptixPipelineCompileOptions pipelineCompileOptions = {};
     pipelineCompileOptions.usesMotionBlur        = false;
     pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
-    pipelineCompileOptions.numPayloadValues      = 4;
+    pipelineCompileOptions.numPayloadValues      = 3;
     pipelineCompileOptions.numAttributeValues    = 2;
     pipelineCompileOptions.exceptionFlags        = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
@@ -283,17 +292,11 @@ int main(int argc, char* argv[])
         std::cout << "Geometry: " << currentGeomPath << std::endl;
         std::cout << "Points: " << currentPointsPath << std::endl;
         
-        // Load/cache geometry
+        // Load/cache geometry (read into memory only)
         bool geometryChanged = (currentGeomPath != cachedGeometryPath);
         if (geometryChanged) {
             timer.next("Load Geometry");
             std::cout << "Loading new geometry..." << std::endl;
-            
-            // Free old geometry GPU memory
-            if (d_vertices) CUDA_CHECK(cudaFree(d_vertices));
-            if (d_indices) CUDA_CHECK(cudaFree(d_indices));
-            if (d_triangle_to_object) CUDA_CHECK(cudaFree(d_triangle_to_object));
-            if (d_gasOutput) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
             
             cachedGeometry = loadGeometryFromFile(currentGeomPath);
             if (cachedGeometry.vertices.empty()) {
@@ -301,9 +304,71 @@ int main(int argc, char* argv[])
                 continue;
             }
             cachedGeometryPath = currentGeomPath;
+            // numRays already declared after points are loaded
+        } else {
+            std::cout << "Using cached geometry" << std::endl;
+        }
+        
+        // Load/cache points (read into memory only)
+        bool pointsChanged = (currentPointsPath != cachedPointsPath);
+        if (pointsChanged) {
+            timer.next("Load Points");
+            std::cout << "Loading new points..." << std::endl;
             
-            // Upload geometry to GPU
+            cachedPointData = loadPointDataset(currentPointsPath);
+            if (cachedPointData.positions.empty()) {
+                std::cerr << "Error: Failed to load points from " << currentPointsPath << std::endl;
+                continue;
+            }
+            cachedPointsPath = currentPointsPath;
+            std::cout << "Points loaded: " << cachedPointData.numPoints << std::endl;
+        } else {
+            std::cout << "Using cached points" << std::endl;
+        }
+        
+        const int numRays = static_cast<int>(cachedPointData.numPoints);
+        
+        // Upload points to GPU
+        if (pointsChanged) {
+            timer.next("Upload Points");
+            std::cout << "Uploading points to GPU..." << std::endl;
+            
+            // Free old points GPU memory
+            if (d_ray_origins) CUDA_CHECK(cudaFree(d_ray_origins));
+            if (d_results) CUDA_CHECK(cudaFree(d_results));
+            if (d_compact_results) CUDA_CHECK(cudaFree(d_compact_results));
+            if (d_hit_counter) CUDA_CHECK(cudaFree(d_hit_counter));
+            
+            // Ensure any previous GPU work is complete before timing upload
+            CUDA_CHECK(cudaDeviceSynchronize());
+            
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_ray_origins), numRays * sizeof(float3)));
+            CUDA_CHECK(cudaMemcpy(d_ray_origins, cachedPointData.positions.data(), numRays * sizeof(float3), cudaMemcpyHostToDevice));
+            
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_results), numRays * sizeof(RayResult)));
+            // Touch allocated device memory to ensure pages are resident and avoid
+            // first-launch page faults. Also synchronize to ensure uploads complete.
+            CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_results), 0, numRays * sizeof(RayResult)));
+            
+            // Allocate compact output buffers (worst case: all rays hit)
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_compact_results), numRays * sizeof(RayResult)));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hit_counter), sizeof(int)));
+            
+            CUDA_CHECK(cudaDeviceSynchronize());
+            std::cout << "Points uploaded to GPU" << std::endl;
+        }
+        
+        // Upload geometry to GPU and build index
+        if (geometryChanged) {
             timer.next("Upload Geometry");
+            std::cout << "Uploading geometry to GPU..." << std::endl;
+            
+            // Free old geometry GPU memory
+            if (d_vertices) CUDA_CHECK(cudaFree(d_vertices));
+            if (d_indices) CUDA_CHECK(cudaFree(d_indices));
+            if (d_triangle_to_object) CUDA_CHECK(cudaFree(d_triangle_to_object));
+            if (d_gasOutput) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
+            
             size_t vbytes = cachedGeometry.vertices.size() * sizeof(float3);
             size_t ibytes = cachedGeometry.indices.size() * sizeof(uint3);
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices), vbytes));
@@ -314,8 +379,11 @@ int main(int argc, char* argv[])
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), cachedGeometry.triangleToObject.size() * sizeof(int)));
             CUDA_CHECK(cudaMemcpy(d_triangle_to_object, cachedGeometry.triangleToObject.data(), cachedGeometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
             
+            std::cout << "Geometry uploaded to GPU" << std::endl;
+            
             // Build acceleration structure
             timer.next("Build Index");
+            std::cout << "Building acceleration structure..." << std::endl;
             CUdeviceptr d_vertices_ptr = reinterpret_cast<CUdeviceptr>(d_vertices);
             CUdeviceptr d_indices_ptr = reinterpret_cast<CUdeviceptr>(d_indices);
             
@@ -329,7 +397,7 @@ int main(int argc, char* argv[])
             buildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(cachedGeometry.indices.size());
             buildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
             buildInput.triangleArray.indexStrideInBytes = sizeof(uint3);
-            unsigned int triangle_input_flags = OPTIX_GEOMETRY_FLAG_NONE;
+            unsigned int triangle_input_flags = OPTIX_GEOMETRY_FLAG_DISABLE_TRIANGLE_FACE_CULLING;
             buildInput.triangleArray.flags = &triangle_input_flags;
             buildInput.triangleArray.numSbtRecords = 1;
             
@@ -349,53 +417,8 @@ int main(int argc, char* argv[])
             // Ensure the acceleration structure build is completed on the device
             // and visible to subsequent launches.
             CUDA_CHECK(cudaDeviceSynchronize());
-            std::cout << "Geometry loaded: " << cachedGeometry.vertices.size() << " vertices, " << cachedGeometry.indices.size() << " triangles" << std::endl;
-        } else {
-            std::cout << "Using cached geometry" << std::endl;
+            std::cout << "Acceleration structure built" << std::endl;
         }
-        
-        // Load/cache points
-        bool pointsChanged = (currentPointsPath != cachedPointsPath);
-        if (pointsChanged) {
-            timer.next("Load Points");
-            std::cout << "Loading new points..." << std::endl;
-            
-            // Free old points GPU memory
-            if (d_ray_origins) CUDA_CHECK(cudaFree(d_ray_origins));
-            if (d_results) CUDA_CHECK(cudaFree(d_results));
-            if (d_compact_results) CUDA_CHECK(cudaFree(d_compact_results));
-            if (d_hit_counter) CUDA_CHECK(cudaFree(d_hit_counter));
-            
-            cachedPointData = loadPointDataset(currentPointsPath);
-            if (cachedPointData.positions.empty()) {
-                std::cerr << "Error: Failed to load points from " << currentPointsPath << std::endl;
-                continue;
-            }
-            cachedPointsPath = currentPointsPath;
-            
-            // Upload points to GPU
-            timer.next("Upload Points");
-            const int numRays = static_cast<int>(cachedPointData.numPoints);
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_ray_origins), numRays * sizeof(float3)));
-            CUDA_CHECK(cudaMemcpy(d_ray_origins, cachedPointData.positions.data(), numRays * sizeof(float3), cudaMemcpyHostToDevice));
-            
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_results), numRays * sizeof(RayResult)));
-            // Touch allocated device memory to ensure pages are resident and avoid
-            // first-launch page faults. Also synchronize to ensure uploads complete.
-            CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_results), 0, numRays * sizeof(RayResult)));
-            
-            // Allocate compact output buffers (worst case: all rays hit)
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_compact_results), numRays * sizeof(RayResult)));
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hit_counter), sizeof(int)));
-            
-            CUDA_CHECK(cudaDeviceSynchronize());
-            
-            std::cout << "Points loaded: " << numRays << std::endl;
-        } else {
-            std::cout << "Using cached points" << std::endl;
-        }
-        
-        const int numRays = static_cast<int>(cachedPointData.numPoints);
         
         timer.next("Warmup");
         const int warmupRuns = 2;

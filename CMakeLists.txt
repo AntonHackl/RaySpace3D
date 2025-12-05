@@ -1,11 +1,6 @@
 
 cmake_minimum_required(VERSION 3.18)
 
-# Use vcpkg toolchain if available
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "${CMAKE_SOURCE_DIR}/../vcpkg/scripts/buildsystems/vcpkg.cmake")
-    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/../vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
-endif()
-
 project(OptiXSingleRay LANGUAGES CXX CUDA)
 
 cmake_policy(SET CMP0167 NEW)
@@ -18,6 +13,13 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Enable position-independent code for CUDA to work with conda compilers
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -fPIE")
+
+# Add library search paths for system libraries
+link_directories(/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu)
+
 # Export compile commands for IntelliSense
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -26,10 +28,25 @@ if(WIN32)
     add_definitions(-DNOMINMAX)
 endif()
 
-# Find required packages (prefer vcpkg if available)
+# Find required packages from conda environment
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 find_package(CGAL REQUIRED)
-find_package(tinyobjloader CONFIG REQUIRED)
+
+# TinyObjLoader - handle both conda and manual installation
+find_package(tinyobjloader CONFIG QUIET)
+if(NOT tinyobjloader_FOUND)
+    # Check for local tinyobjloader
+    set(TINYOBJLOADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/tinyobjloader)
+    if(EXISTS ${TINYOBJLOADER_DIR}/tiny_obj_loader.h AND EXISTS ${TINYOBJLOADER_DIR}/tiny_obj_loader.cc)
+        # Build tinyobjloader as a static library
+        add_library(tinyobjloader STATIC ${TINYOBJLOADER_DIR}/tiny_obj_loader.cc)
+        target_include_directories(tinyobjloader PUBLIC ${TINYOBJLOADER_DIR})
+        add_library(tinyobjloader::tinyobjloader ALIAS tinyobjloader)
+        message(STATUS "Building local TinyObjLoader from: ${TINYOBJLOADER_DIR}")
+    else()
+        message(FATAL_ERROR "TinyObjLoader not found. Please download it to external/tinyobjloader/")
+    endif()
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
@@ -119,14 +136,14 @@ add_dependencies(raytracer_filter_refine copy_ptx)
 # RayJoin works without that explicit linkage, so mirror the same approach here.
 target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 target_link_libraries(raytracer_filter_refine PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
+target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 
 # Define INCLUDE_OPTIX for raytracer only
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_filter_refine PRIVATE INCLUDE_OPTIX)
 
-# Linking for triangulate_single_polygon and preprocess_dataset
+# Linking for triangulate_single_polygon
 target_link_libraries(triangulate_single_polygon PRIVATE CGAL::CGAL Boost::filesystem Boost::system)
-target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_filter_refine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
