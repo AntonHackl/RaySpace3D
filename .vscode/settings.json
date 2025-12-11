@@ -1,9 +1,13 @@
 {
-    "cmake.sourceDirectory": "C:/Users/anton/Documents/Uni/PipRay",
+    "cmake.sourceDirectory": "${workspaceFolder}",
     "cmake.buildDirectory": "${workspaceFolder}/build",
     "cmake.configureArgs": [
         "-DCMAKE_BUILD_TYPE=Debug"
     ],
+    "cmake.environment": {
+        "CMAKE_PREFIX_PATH": "${env:CONDA_PREFIX}",
+        "CUDA_PATH": "${env:CONDA_PREFIX}"
+    },
     "files.associations": {
         "*.cu": "cuda-cpp",
         "algorithm": "cpp",

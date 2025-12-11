@@ -7,6 +7,8 @@
                 "${workspaceFolder}/src",
                 "${workspaceFolder}/CDT/CDT/include",
                 "C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include",
+                "${env:CONDA_PREFIX}/Library/include",
+                "${env:CONDA_PREFIX}/Library/include/cuda",
                 "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.9/include",
                 "C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.0.0/include"
             ],

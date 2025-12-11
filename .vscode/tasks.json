@@ -3,14 +3,16 @@
 		{
 			"label": "CMake: configure",
 			"type": "shell",
-			"command": "cmake",
+			"command": "powershell",
 			"args": [
+				"-File",
+				"${workspaceFolder}/scripts/conda-run.ps1",
+				"cmake",
 				"-S",
 				"${workspaceFolder}",
 				"-B",
 				"${workspaceFolder}/build",
-				"-DCMAKE_BUILD_TYPE=Debug",
-				"-DCMAKE_TOOLCHAIN_FILE=C:/Users/anton/Documents/Uni/vcpkg/scripts/buildsystems/vcpkg.cmake"
+				"-DCMAKE_BUILD_TYPE=Debug"
 			],
 			"group": "build",
 			"presentation": {
@@ -24,8 +26,11 @@
 		{
 			"label": "CMake: build",
 			"type": "shell",
-			"command": "cmake",
+			"command": "powershell",
 			"args": [
+				"-File",
+				"${workspaceFolder}/scripts/conda-run.ps1",
+				"cmake",
 				"--build",
 				"${workspaceFolder}/build",
 				"--config",
@@ -69,14 +74,16 @@
 		{
 			"label": "CMake: configure",
 			"type": "shell",
-			"command": "cmake",
+			"command": "powershell",
 			"args": [
+				"-File",
+				"${workspaceFolder}/scripts/conda-run.ps1",
+				"cmake",
 				"-S",
 				"${workspaceFolder}",
 				"-B",
 				"${workspaceFolder}/build",
-				"-DCMAKE_BUILD_TYPE=Debug",
-				"-DCMAKE_TOOLCHAIN_FILE=C:/Users/anton/Documents/Uni/vcpkg/scripts/buildsystems/vcpkg.cmake"
+				"-DCMAKE_BUILD_TYPE=Debug"
 			],
 			"group": "build"
 		}

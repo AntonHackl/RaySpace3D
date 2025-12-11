@@ -15,10 +15,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Enable position-independent code for CUDA to work with conda compilers
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -fPIE")
-
-# Add library search paths for system libraries
-link_directories(/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu)
+if(NOT WIN32)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -fPIE")
+    # Add library search paths for system libraries (Linux only)
+    link_directories(/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu)
+endif()
 
 # Export compile commands for IntelliSense
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -49,6 +50,52 @@ if(NOT tinyobjloader_FOUND)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+# Detect conda environment and configure CUDA paths
+if(DEFINED ENV{CONDA_PREFIX})
+    set(CONDA_PREFIX $ENV{CONDA_PREFIX})
+    message(STATUS "Conda environment detected: ${CONDA_PREFIX}")
+    
+    # Add conda prefix to CMAKE_PREFIX_PATH for library discovery
+    list(PREPEND CMAKE_PREFIX_PATH "${CONDA_PREFIX}")
+    
+    # On Windows, conda CUDA is typically in Library/bin
+    # On Linux, it's in bin
+    if(WIN32)
+        set(CONDA_CUDA_BIN "${CONDA_PREFIX}/Library/bin")
+        set(CONDA_CUDA_INCLUDE "${CONDA_PREFIX}/Library/include")
+        set(CONDA_CUDA_LIB "${CONDA_PREFIX}/Library/lib")
+    else()
+        set(CONDA_CUDA_BIN "${CONDA_PREFIX}/bin")
+        set(CONDA_CUDA_INCLUDE "${CONDA_PREFIX}/include")
+        set(CONDA_CUDA_LIB "${CONDA_PREFIX}/lib")
+    endif()
+    
+    # Check if conda CUDA nvcc exists
+    if(EXISTS "${CONDA_CUDA_BIN}/nvcc${CMAKE_EXECUTABLE_SUFFIX}" OR EXISTS "${CONDA_CUDA_BIN}/nvcc")
+        message(STATUS "Found conda CUDA toolkit at: ${CONDA_PREFIX}")
+        # Set CUDA paths explicitly for conda CUDA (before find_package)
+        if(NOT DEFINED CUDA_PATH)
+            set(CUDA_PATH "${CONDA_PREFIX}" CACHE PATH "CUDA installation path")
+        endif()
+        if(NOT DEFINED CMAKE_CUDA_COMPILER)
+            if(EXISTS "${CONDA_CUDA_BIN}/nvcc${CMAKE_EXECUTABLE_SUFFIX}")
+                set(CMAKE_CUDA_COMPILER "${CONDA_CUDA_BIN}/nvcc${CMAKE_EXECUTABLE_SUFFIX}" CACHE FILEPATH "CUDA compiler")
+            else()
+                set(CMAKE_CUDA_COMPILER "${CONDA_CUDA_BIN}/nvcc" CACHE FILEPATH "CUDA compiler")
+            endif()
+        endif()
+        # Add conda CUDA include and library paths
+        include_directories("${CONDA_CUDA_INCLUDE}")
+        link_directories("${CONDA_CUDA_LIB}")
+    else()
+        if(WIN32)
+            message(FATAL_ERROR "CONDA_PREFIX is set but conda CUDA toolkit not found. On Windows, conda CUDA is required. Please install: conda install -c nvidia cuda-toolkit=12.8")
+        else()
+            message(WARNING "CONDA_PREFIX is set but nvcc not found in conda environment. Falling back to system CUDA.")
+        endif()
+    endif()
+endif()
 
 find_package(CUDA REQUIRED)
 include(cmake/FindOptiX.cmake)
@@ -131,6 +178,16 @@ set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
 add_custom_target(copy_ptx DEPENDS ${PTX_FILES})
 add_dependencies(raytracer copy_ptx)
 add_dependencies(raytracer_filter_refine copy_ptx)
+
+# Copy PTX file to bin directory so executables can find it
+foreach(TARGET_NAME raytracer raytracer_filter_refine)
+    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${PTX_FILE}"
+        "$<TARGET_FILE_DIR:${TARGET_NAME}>/raytracing${OPTIX_MODULE_EXTENSION}"
+        COMMENT "Copying PTX file to ${TARGET_NAME} output directory"
+    )
+endforeach()
 
 
 # OptiX host functions are loaded through the stub headers at runtime, so linking the explicit

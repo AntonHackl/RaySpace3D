@@ -8,6 +8,10 @@ dependencies:
   - python=3.11
   - cmake>=3.18
   - make
+  # Linux-specific compilers
+  - gxx_linux-64=11.4.0
+  - gcc_linux-64=11.4.0
+  - sysroot_linux-64
   # CUDA toolkit (cross-platform, from nvidia channel)
   - cuda-toolkit=12.8
   
@@ -20,3 +24,4 @@ dependencies:
   
   # Utilities
   - pkg-config
+

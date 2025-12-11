@@ -49,9 +49,19 @@ inline std::string detectPTXPath()
             std::ifstream f(candidate, std::ios::binary);
             if (f.good()) return candidate;
         }
+        {
+            std::string candidate = dir + "..\\..\\raytracing.ptx";
+            std::ifstream f(candidate, std::ios::binary);
+            if (f.good()) return candidate;
+        }
 #else
         {
             std::string candidate = dir + "../raytracing.ptx";
+            std::ifstream f(candidate, std::ios::binary);
+            if (f.good()) return candidate;
+        }
+        {
+            std::string candidate = dir + "../../raytracing.ptx";
             std::ifstream f(candidate, std::ios::binary);
             if (f.good()) return candidate;
         }
