@@ -2,31 +2,34 @@
 
 #include <vector>
 
+// PinnedMemory.h includes cuda_runtime.h, which defines float3/uint3
+// So we must include it first to avoid redefinition conflicts
+#include "PinnedMemory.h"
+
 #ifdef INCLUDE_OPTIX
 #include <optix.h>
-#include <cuda_runtime.h>
-#else
-// Define basic types for non-OptiX builds
-struct float3 {
-    float x, y, z;
-    float3() : x(0), y(0), z(0) {}
-    float3(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
-};
-struct uint3 {
-    unsigned int x, y, z;
-    uint3() : x(0), y(0), z(0) {}
-    uint3(unsigned int x_, unsigned int y_, unsigned int z_) : x(x_), y(y_), z(z_) {}
-};
+// cuda_runtime.h already included via PinnedMemory.h
 #endif
 
+// No need for custom float3/uint3 definitions anymore
+// They come from cuda_runtime.h via PinnedMemory.h
+
 struct GeometryData {
+    // CPU-side data (std::vectors for flexibility)
     std::vector<float3> vertices;
     std::vector<uint3> indices;
     std::vector<int> triangleToObject;
     size_t totalTriangles = 0;
+    
+    // Pinned memory buffers for fast GPU transfer
+    PinnedGeometryBuffers pinnedBuffers;
 };
 
 struct PointData {
+    // CPU-side data (std::vector for flexibility)
     std::vector<float3> positions;
     size_t numPoints = 0;
+    
+    // Pinned memory buffer for fast GPU transfer
+    PinnedPointBuffers pinnedBuffers;
 };

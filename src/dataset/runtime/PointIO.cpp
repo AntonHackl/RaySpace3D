@@ -56,6 +56,12 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
     }
     pointData.numPoints = pointData.positions.size();
     std::cout << "Loaded " << pointData.numPoints << " points from dataset" << std::endl;
+    
+    // Allocate and populate pinned memory buffer for fast GPU transfer
+    std::cout << "Allocating pinned memory buffer..." << std::endl;
+    pointData.pinnedBuffers.allocate(pointData.numPoints);
+    pointData.pinnedBuffers.copyFrom(pointData.positions);
+    std::cout << "Pinned buffer ready for GPU transfer" << std::endl;
     std::cout << "=============================\n" << std::endl;
     return pointData;
 }

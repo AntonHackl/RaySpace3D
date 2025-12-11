@@ -2,20 +2,36 @@
 
 # Build RaySpace3D using conda
 
-set -euo pipefail
-
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/build"
 
-# Check if conda environment is active
-if [ -z "${CONDA_PREFIX:-}" ]; then
-    echo "Error: No conda environment detected!"
-    echo "Please activate the rayspace3d conda environment first:"
-    echo "  conda env create -f environment.yml"
-    echo "  conda activate rayspace3d"
-    exit 1
+# Activate rayspace3d environment if not already active
+if [ -z "${CONDA_PREFIX:-}" ] || [[ "$CONDA_PREFIX" != *"rayspace3d"* ]]; then
+    echo "Activating rayspace3d conda environment..."
+    # Source conda (disable strict mode temporarily)
+    set +u
+    if [ -f "$HOME/conda3/etc/profile.d/conda.sh" ]; then
+        source "$HOME/conda3/etc/profile.d/conda.sh"
+    elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+        source "$HOME/miniconda3/etc/profile.d/conda.sh"
+    elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
+        source "/opt/conda/etc/profile.d/conda.sh"
+    else
+        echo "Error: Could not find conda installation"
+        exit 1
+    fi
+    
+    conda activate rayspace3d || {
+        echo "Error: Failed to activate rayspace3d environment"
+        echo "Please create it first:"
+        echo "  conda env create -f environment.yml"
+        exit 1
+    }
+    set -u
 fi
+
+set -euo pipefail
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 
@@ -35,9 +51,10 @@ fi
 
 echo "Using OptiX SDK at: $OptiX_INSTALL_DIR"
 
-# Use system compilers to avoid conda sysroot issues
-export CC="gcc"
-export CXX="g++"
+# Don't override compilers - let conda environment provide them if available
+# This ensures proper library paths are used
+# export CC="gcc"
+# export CXX="g++"
 
 # Use system CUDA or conda CUDA
 if command -v nvcc &> /dev/null; then
@@ -56,15 +73,8 @@ fi
 # Set up library and include paths
 export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
 
-# Add system library paths for CUDA linking
-export LIBRARY_PATH="/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:$CONDA_PREFIX/lib:${LIBRARY_PATH:-}"
-export LD_LIBRARY_PATH="/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
-
-# Don't use sysroot for linking to avoid library conflicts
-unset LDFLAGS
-unset CPPFLAGS
-unset CFLAGS
-unset CXXFLAGS
+# Don't override conda environment's library paths and compiler flags
+# The conda environment already sets these correctly
 
 
 # Download tinyobjloader if missing
@@ -82,6 +92,29 @@ cd "$BUILD_DIR"
 
 echo "Running CMake..."
 cmake ..
+
+# After running CMake inside the project environment, switch out of the
+# rayspace3d environment so that the actual `make` step runs in `base`.
+# This avoids linking against conda-provided sysroots during the compile/link
+# phase while keeping the configure step (CMake) using the conda environment.
+echo "Switching to 'base' conda environment for the build (make)..."
+# Try to activate base; if that fails, at minimum deactivate current env.
+# Disable strict mode for conda operations
+set +u
+if command -v conda &> /dev/null; then
+    # Prefer activating 'base' explicitly; fall back to simple deactivate.
+    conda deactivate || true
+    if conda activate base 2>/dev/null; then
+        echo "Activated 'base' environment"
+    else
+        echo "Could not activate 'base' (continuing with environment deactivated)"
+        # Ensure we are at least deactivated
+        conda deactivate || true
+    fi
+else
+    echo "conda command not found; leaving current shell environment as-is"
+fi
+set -u
 
 echo "Building..."
 make -j$(nproc)

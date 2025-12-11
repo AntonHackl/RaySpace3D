@@ -77,6 +77,16 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
     std::cout << "  Total vertices: " << geometry.vertices.size() << std::endl;
     std::cout << "  Total triangles: " << geometry.indices.size() << std::endl;
     std::cout << "  Triangle-to-object mappings: " << geometry.triangleToObject.size() << std::endl;
+    
+    // Allocate and populate pinned memory buffers for fast GPU transfer
+    std::cout << "  Allocating pinned memory buffers..." << std::endl;
+    geometry.pinnedBuffers.allocate(geometry.vertices.size(), 
+                                    geometry.indices.size(), 
+                                    geometry.triangleToObject.size());
+    geometry.pinnedBuffers.copyFrom(geometry.vertices, 
+                                    geometry.indices, 
+                                    geometry.triangleToObject);
+    std::cout << "  Pinned buffers ready for GPU transfer" << std::endl;
     std::cout << "=============================\n" << std::endl;
 
     return geometry;

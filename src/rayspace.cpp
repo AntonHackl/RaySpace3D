@@ -343,7 +343,8 @@ int main(int argc, char* argv[])
             CUDA_CHECK(cudaDeviceSynchronize());
             
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_ray_origins), numRays * sizeof(float3)));
-            CUDA_CHECK(cudaMemcpy(d_ray_origins, cachedPointData.positions.data(), numRays * sizeof(float3), cudaMemcpyHostToDevice));
+            // Use pinned memory buffer for faster DMA transfer
+            CUDA_CHECK(cudaMemcpy(d_ray_origins, cachedPointData.pinnedBuffers.positions_pinned, numRays * sizeof(float3), cudaMemcpyHostToDevice));
             
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_results), numRays * sizeof(RayResult)));
             // Touch allocated device memory to ensure pages are resident and avoid
@@ -373,11 +374,13 @@ int main(int argc, char* argv[])
             size_t ibytes = cachedGeometry.indices.size() * sizeof(uint3);
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices), vbytes));
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices), ibytes));
-            CUDA_CHECK(cudaMemcpy(d_vertices, cachedGeometry.vertices.data(), vbytes, cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(d_indices, cachedGeometry.indices.data(), ibytes, cudaMemcpyHostToDevice));
+            // Use pinned memory buffers for faster DMA transfer
+            CUDA_CHECK(cudaMemcpy(d_vertices, cachedGeometry.pinnedBuffers.vertices_pinned, vbytes, cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_indices, cachedGeometry.pinnedBuffers.indices_pinned, ibytes, cudaMemcpyHostToDevice));
             
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), cachedGeometry.triangleToObject.size() * sizeof(int)));
-            CUDA_CHECK(cudaMemcpy(d_triangle_to_object, cachedGeometry.triangleToObject.data(), cachedGeometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
+            // Use pinned memory buffer for faster DMA transfer
+            CUDA_CHECK(cudaMemcpy(d_triangle_to_object, cachedGeometry.pinnedBuffers.triangleToObject_pinned, cachedGeometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
             
             std::cout << "Geometry uploaded to GPU" << std::endl;
             
@@ -497,11 +500,14 @@ int main(int argc, char* argv[])
         CUDA_CHECK(cudaMemcpy(&numHit, d_hit_counter, sizeof(int), cudaMemcpyDeviceToHost));
         size_t numMiss = numRays - numHit;
         
-        // Download only compacted hits
+        // Download only compacted hits using pinned memory for faster DMA transfer
         std::vector<RayResult> h_hits;
+        PinnedResultBuffer<RayResult> pinnedResults;
         if (numHit > 0) {
-            h_hits.resize(numHit);
-            CUDA_CHECK(cudaMemcpy(h_hits.data(), d_compact_results, numHit * sizeof(RayResult), cudaMemcpyDeviceToHost));
+            pinnedResults.allocate(numHit);
+            CUDA_CHECK(cudaMemcpy(pinnedResults.buffer_pinned, d_compact_results, numHit * sizeof(RayResult), cudaMemcpyDeviceToHost));
+            // Copy from pinned buffer to std::vector
+            pinnedResults.copyTo(h_hits);
         }
         timer.next("Output");
         std::cout << "\n=== Point-in-Polygon Summary ===" << std::endl;
@@ -550,6 +556,12 @@ int main(int argc, char* argv[])
         } else {
             std::cout << "Skipping export of results (disabled by flag)" << std::endl;
         }
+        
+        // Free pinned memory buffers after task completion
+        std::cout << "Freeing pinned memory buffers..." << std::endl;
+        cachedGeometry.pinnedBuffers.free();
+        cachedPointData.pinnedBuffers.free();
+        // pinnedResults automatically freed by RAII destructor
     } // End of task loop
 
     timer.next("Cleanup");

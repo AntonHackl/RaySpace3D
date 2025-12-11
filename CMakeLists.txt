@@ -121,6 +121,8 @@ target_include_directories(triangulate_single_polygon PRIVATE
     ${DATASET_COMMON_DIR})
     
 target_include_directories(preprocess_dataset PRIVATE 
+    ${CUDA_INCLUDE_DIRS} 
+    ${OptiX_INCLUDE}
     ${SRC_DIR}
     ${DATASET_COMMON_DIR}
     ${DATASET_PREPROCESS_DIR})
@@ -136,7 +138,7 @@ add_dependencies(raytracer_filter_refine copy_ptx)
 # RayJoin works without that explicit linkage, so mirror the same approach here.
 target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 target_link_libraries(raytracer_filter_refine PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
-target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
+target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system ${CUDA_LIBRARIES})
 
 # Define INCLUDE_OPTIX for raytracer only
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
