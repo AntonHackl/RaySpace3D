@@ -299,7 +299,7 @@ int main(int argc, char* argv[])
             std::cout << "Loading new geometry..." << std::endl;
             
             cachedGeometry = loadGeometryFromFile(currentGeomPath);
-            if (cachedGeometry.vertices.empty()) {
+            if (!cachedGeometry.pinnedBuffers.allocated || cachedGeometry.pinnedBuffers.vertices_size == 0) {
                 std::cerr << "Error: Failed to load geometry from " << currentGeomPath << std::endl;
                 continue;
             }
@@ -316,7 +316,7 @@ int main(int argc, char* argv[])
             std::cout << "Loading new points..." << std::endl;
             
             cachedPointData = loadPointDataset(currentPointsPath);
-            if (cachedPointData.positions.empty()) {
+            if (cachedPointData.numPoints == 0 || !cachedPointData.pinnedBuffers.allocated) {
                 std::cerr << "Error: Failed to load points from " << currentPointsPath << std::endl;
                 continue;
             }
@@ -370,17 +370,17 @@ int main(int argc, char* argv[])
             if (d_triangle_to_object) CUDA_CHECK(cudaFree(d_triangle_to_object));
             if (d_gasOutput) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_gasOutput)));
             
-            size_t vbytes = cachedGeometry.vertices.size() * sizeof(float3);
-            size_t ibytes = cachedGeometry.indices.size() * sizeof(uint3);
+            size_t vbytes = cachedGeometry.pinnedBuffers.vertices_size * sizeof(float3);
+            size_t ibytes = cachedGeometry.pinnedBuffers.indices_size * sizeof(uint3);
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices), vbytes));
             CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices), ibytes));
             // Use pinned memory buffers for faster DMA transfer
             CUDA_CHECK(cudaMemcpy(d_vertices, cachedGeometry.pinnedBuffers.vertices_pinned, vbytes, cudaMemcpyHostToDevice));
             CUDA_CHECK(cudaMemcpy(d_indices, cachedGeometry.pinnedBuffers.indices_pinned, ibytes, cudaMemcpyHostToDevice));
             
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), cachedGeometry.triangleToObject.size() * sizeof(int)));
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), cachedGeometry.pinnedBuffers.triangleToObject_size * sizeof(int)));
             // Use pinned memory buffer for faster DMA transfer
-            CUDA_CHECK(cudaMemcpy(d_triangle_to_object, cachedGeometry.pinnedBuffers.triangleToObject_pinned, cachedGeometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_triangle_to_object, cachedGeometry.pinnedBuffers.triangleToObject_pinned, cachedGeometry.pinnedBuffers.triangleToObject_size * sizeof(int), cudaMemcpyHostToDevice));
             
             std::cout << "Geometry uploaded to GPU" << std::endl;
             
@@ -393,11 +393,11 @@ int main(int argc, char* argv[])
             OptixBuildInput buildInput = {};
             buildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
             buildInput.triangleArray.vertexBuffers = &d_vertices_ptr;
-            buildInput.triangleArray.numVertices = static_cast<unsigned int>(cachedGeometry.vertices.size());
+            buildInput.triangleArray.numVertices = static_cast<unsigned int>(cachedGeometry.pinnedBuffers.vertices_size);
             buildInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
             buildInput.triangleArray.vertexStrideInBytes = sizeof(float3);
             buildInput.triangleArray.indexBuffer = d_indices_ptr;
-            buildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(cachedGeometry.indices.size());
+            buildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(cachedGeometry.pinnedBuffers.indices_size);
             buildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
             buildInput.triangleArray.indexStrideInBytes = sizeof(uint3);
             unsigned int triangle_input_flags = OPTIX_GEOMETRY_FLAG_DISABLE_TRIANGLE_FACE_CULLING;
@@ -500,14 +500,11 @@ int main(int argc, char* argv[])
         CUDA_CHECK(cudaMemcpy(&numHit, d_hit_counter, sizeof(int), cudaMemcpyDeviceToHost));
         size_t numMiss = numRays - numHit;
         
-        // Download only compacted hits using pinned memory for faster DMA transfer
+        // Download only compacted hits directly to std::vector
         std::vector<RayResult> h_hits;
-        PinnedResultBuffer<RayResult> pinnedResults;
         if (numHit > 0) {
-            pinnedResults.allocate(numHit);
-            CUDA_CHECK(cudaMemcpy(pinnedResults.buffer_pinned, d_compact_results, numHit * sizeof(RayResult), cudaMemcpyDeviceToHost));
-            // Copy from pinned buffer to std::vector
-            pinnedResults.copyTo(h_hits);
+            h_hits.resize(numHit);
+            CUDA_CHECK(cudaMemcpy(h_hits.data(), d_compact_results, numHit * sizeof(RayResult), cudaMemcpyDeviceToHost));
         }
         timer.next("Output");
         std::cout << "\n=== Point-in-Polygon Summary ===" << std::endl;
@@ -527,9 +524,11 @@ int main(int argc, char* argv[])
                 hitLookup[hit.ray_id] = hit;
             }
             
+            // Access positions directly from pinned memory
+            float3* positions = cachedPointData.pinnedBuffers.positions_pinned;
             for (int i = 0; i < numRays; ++i) {
                 std::cout << "\n=== Ray " << (i+1) << " ===" << std::endl;
-                std::cout << "Ray origin: (" << cachedPointData.positions[i].x << ", " << cachedPointData.positions[i].y << ", " << cachedPointData.positions[i].z << ")" << std::endl;
+                std::cout << "Ray origin: (" << positions[i].x << ", " << positions[i].y << ", " << positions[i].z << ")" << std::endl;
 
                 if (isHit[i]) {
                     const auto& result = hitLookup[i];
@@ -561,7 +560,6 @@ int main(int argc, char* argv[])
         std::cout << "Freeing pinned memory buffers..." << std::endl;
         cachedGeometry.pinnedBuffers.free();
         cachedPointData.pinnedBuffers.free();
-        // pinnedResults automatically freed by RAII destructor
     } // End of task loop
 
     timer.next("Cleanup");
@@ -596,8 +594,8 @@ int main(int argc, char* argv[])
         std::cout << "Number of runs per task: " << numberOfRuns << std::endl;
     }
     
-    if (!cachedGeometry.vertices.empty()) {
-        std::cout << "Final geometry: " << cachedGeometry.vertices.size() << " vertices, " << cachedGeometry.indices.size() << " triangles" << std::endl;
+    if (cachedGeometry.pinnedBuffers.allocated) {
+        std::cout << "Final geometry: " << cachedGeometry.pinnedBuffers.vertices_size << " vertices, " << cachedGeometry.pinnedBuffers.indices_size << " triangles" << std::endl;
     }
 
     return 0;

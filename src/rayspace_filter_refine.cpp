@@ -135,17 +135,17 @@ int main(int argc, char* argv[])
     // Load geometry
     std::cout << "Loading geometry from: " << geometryFilePath << std::endl;
     GeometryData geometry = loadGeometryFromFile(geometryFilePath);
-    if (geometry.vertices.empty()) {
+    if (geometry.pinnedBuffers.vertices_size == 0) {
         std::cerr << "Error: Failed to load geometry from " << geometryFilePath << std::endl;
         return 1;
     }
-    std::cout << "Geometry loaded: " << geometry.vertices.size() << " vertices, " 
-              << geometry.indices.size() << " triangles" << std::endl;
+    std::cout << "Geometry loaded: " << geometry.pinnedBuffers.vertices_size << " vertices, " 
+              << geometry.pinnedBuffers.indices_size << " triangles" << std::endl;
     
     // Load points
     std::cout << "Loading points from: " << pointDatasetPath << std::endl;
     PointData pointData = loadPointDataset(pointDatasetPath);
-    if (pointData.positions.empty()) {
+    if (pointData.numPoints == 0) {
         std::cerr << "Error: Failed to load points from " << pointDatasetPath << std::endl;
         return 1;
     }
@@ -260,7 +260,7 @@ int main(int argc, char* argv[])
     
     const int numBBoxRays = static_cast<int>(pointData.numPoints);
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_ray_origins), numBBoxRays * sizeof(float3)));
-    CUDA_CHECK(cudaMemcpy(d_bbox_ray_origins, pointData.positions.data(), numBBoxRays * sizeof(float3), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_bbox_ray_origins, pointData.pinnedBuffers.positions_pinned, numBBoxRays * sizeof(float3), cudaMemcpyHostToDevice));
     
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_bbox_results), numBBoxRays * sizeof(RayResult)));
     CUDA_CHECK(cudaMemset(reinterpret_cast<void*>(d_bbox_results), 0, numBBoxRays * sizeof(RayResult)));
@@ -271,8 +271,8 @@ int main(int argc, char* argv[])
     std::cout << "\n=== PHASE 1: FILTER (Bounding Box via Ray Tracing) ===" << std::endl;
 
     BoundingBox queryBBox;
-    for (const auto& vertex : geometry.vertices) {
-        queryBBox.expand(vertex);
+    for (size_t i = 0; i < geometry.pinnedBuffers.vertices_size; i++) {
+        queryBBox.expand(geometry.pinnedBuffers.vertices_pinned[i]);
     }
     
     std::cout << "Query bounding box computed:" << std::endl;
@@ -468,7 +468,7 @@ int main(int argc, char* argv[])
     std::vector<float3> candidatePoints;
     candidatePoints.reserve(candidateCount);
     for (int idx : candidateIndices) {
-        candidatePoints.push_back(pointData.positions[idx]);
+        candidatePoints.push_back(pointData.pinnedBuffers.positions_pinned[idx]);
     }
     
     float3* d_refine_ray_origins = nullptr;
@@ -488,15 +488,15 @@ int main(int argc, char* argv[])
     uint3* d_indices = nullptr;
     int* d_triangle_to_object = nullptr;
     
-    size_t vbytes = geometry.vertices.size() * sizeof(float3);
-    size_t ibytes = geometry.indices.size() * sizeof(uint3);
+    size_t vbytes = geometry.pinnedBuffers.vertices_size * sizeof(float3);
+    size_t ibytes = geometry.pinnedBuffers.indices_size * sizeof(uint3);
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_vertices), vbytes));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices), ibytes));
-    CUDA_CHECK(cudaMemcpy(d_vertices, geometry.vertices.data(), vbytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_indices, geometry.indices.data(), ibytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_vertices, geometry.pinnedBuffers.vertices_pinned, vbytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_indices, geometry.pinnedBuffers.indices_pinned, ibytes, cudaMemcpyHostToDevice));
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), geometry.triangleToObject.size() * sizeof(int)));
-    CUDA_CHECK(cudaMemcpy(d_triangle_to_object, geometry.triangleToObject.data(), geometry.triangleToObject.size() * sizeof(int), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object), geometry.pinnedBuffers.triangleToObject_size * sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_triangle_to_object, geometry.pinnedBuffers.triangleToObject_pinned, geometry.pinnedBuffers.triangleToObject_size * sizeof(int), cudaMemcpyHostToDevice));
     
     // Build acceleration structure for query geometry
     timer.next("Build Index");
@@ -506,11 +506,11 @@ int main(int argc, char* argv[])
     OptixBuildInput queryBuildInput = {};
     queryBuildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
     queryBuildInput.triangleArray.vertexBuffers = &d_vertices_ptr;
-    queryBuildInput.triangleArray.numVertices = static_cast<unsigned int>(geometry.vertices.size());
+    queryBuildInput.triangleArray.numVertices = static_cast<unsigned int>(geometry.pinnedBuffers.vertices_size);
     queryBuildInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     queryBuildInput.triangleArray.vertexStrideInBytes = sizeof(float3);
     queryBuildInput.triangleArray.indexBuffer = d_indices_ptr;
-    queryBuildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(geometry.indices.size());
+    queryBuildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(geometry.pinnedBuffers.indices_size);
     queryBuildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     queryBuildInput.triangleArray.indexStrideInBytes = sizeof(uint3);
     unsigned int query_triangle_input_flags = OPTIX_GEOMETRY_FLAG_DISABLE_TRIANGLE_FACE_CULLING;

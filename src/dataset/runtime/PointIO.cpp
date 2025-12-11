@@ -15,7 +15,32 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
     std::cout << "Loading points from: " << pointDatasetPath << std::endl;
     std::ifstream file(pointDatasetPath);
     if (!file.is_open()) { std::cerr << "Error: Could not open point dataset file: " << pointDatasetPath << std::endl; return pointData; }
+    
+    // First pass: count points to allocate pinned memory once
     std::string line; int lineNum = 0;
+    size_t pointCount = 0;
+    std::streampos fileStart = file.tellg();
+    
+    std::cout << "Counting points..." << std::endl;
+    while (std::getline(file, line)) {
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+        if (line.empty() || line[0]=='#') continue;
+        if (line.find("POINT") != std::string::npos || (!line.empty() && std::isdigit(line[0]) || line[0] == '-')) {
+            pointCount++;
+        }
+    }
+    
+    std::cout << "Found " << pointCount << " points. Allocating pinned memory..." << std::endl;
+    pointData.pinnedBuffers.allocate(pointCount);
+    float3* positions_pinned = pointData.pinnedBuffers.positions_pinned;
+    
+    // Second pass: load directly into pinned memory
+    file.clear();
+    file.seekg(fileStart);
+    size_t idx = 0;
+    lineNum = 0;
+    
     while (std::getline(file, line)) {
         lineNum++;
         line.erase(0, line.find_first_not_of(" \t\r\n"));
@@ -29,12 +54,12 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
                     std::stringstream ss(coords);
                     float x, y, z;
                     if (ss >> x >> y >> z) {
-                        pointData.positions.push_back({x, y, z});
+                        positions_pinned[idx++] = {x, y, z};
                     } else {
                         ss.clear();
                         ss.str(coords);
                         if (ss >> x >> y) {
-                            pointData.positions.push_back({x, y, -1.0f});
+                            positions_pinned[idx++] = {x, y, -1.0f};
                         }
                     }
                 }
@@ -46,7 +71,7 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
                 std::stringstream ss(line);
                 float x, y, z;
                 if (ss >> x >> y >> z) {
-                    pointData.positions.push_back({x, y, z});
+                    positions_pinned[idx++] = {x, y, z};
                 }
             } catch (const std::exception& e) {
                 (void)e; // ignore
@@ -54,14 +79,9 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
             }
         }
     }
-    pointData.numPoints = pointData.positions.size();
-    std::cout << "Loaded " << pointData.numPoints << " points from dataset" << std::endl;
-    
-    // Allocate and populate pinned memory buffer for fast GPU transfer
-    std::cout << "Allocating pinned memory buffer..." << std::endl;
-    pointData.pinnedBuffers.allocate(pointData.numPoints);
-    pointData.pinnedBuffers.copyFrom(pointData.positions);
-    std::cout << "Pinned buffer ready for GPU transfer" << std::endl;
+    pointData.numPoints = idx;
+    std::cout << "Loaded " << pointData.numPoints << " points directly into pinned memory" << std::endl;
+    std::cout << "Ready for GPU transfer (zero-copy)" << std::endl;
     std::cout << "=============================\n" << std::endl;
     return pointData;
 }

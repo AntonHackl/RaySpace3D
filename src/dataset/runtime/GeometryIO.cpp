@@ -78,7 +78,9 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
     std::cout << "  Total triangles: " << geometry.indices.size() << std::endl;
     std::cout << "  Triangle-to-object mappings: " << geometry.triangleToObject.size() << std::endl;
     
-    // Allocate and populate pinned memory buffers for fast GPU transfer
+    // Allocate pinned memory and copy from std::vectors
+    // Note: For geometry, we keep std::vector because parsing is complex
+    // but we could optimize this further with direct pinned loading
     std::cout << "  Allocating pinned memory buffers..." << std::endl;
     geometry.pinnedBuffers.allocate(geometry.vertices.size(), 
                                     geometry.indices.size(), 
@@ -86,7 +88,16 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
     geometry.pinnedBuffers.copyFrom(geometry.vertices, 
                                     geometry.indices, 
                                     geometry.triangleToObject);
-    std::cout << "  Pinned buffers ready for GPU transfer" << std::endl;
+    
+    // Free std::vectors immediately to reduce memory pressure
+    geometry.vertices.clear();
+    geometry.vertices.shrink_to_fit();
+    geometry.indices.clear();
+    geometry.indices.shrink_to_fit();
+    geometry.triangleToObject.clear();
+    geometry.triangleToObject.shrink_to_fit();
+    
+    std::cout << "  Pinned buffers ready for GPU transfer (std::vectors freed)" << std::endl;
     std::cout << "=============================\n" << std::endl;
 
     return geometry;
