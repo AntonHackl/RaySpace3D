@@ -1,60 +1,60 @@
 {
   "phases": {
     "data reading_1": {
-      "duration_us": 3171,
-      "duration_ms": 3.17
+      "duration_us": 1473,
+      "duration_ms": 1.47
     },
     "application creation_1": {
-      "duration_us": 297236,
-      "duration_ms": 297.24
+      "duration_us": 262707,
+      "duration_ms": 262.71
     },
     "module and pipeline setup_1": {
-      "duration_us": 342873,
-      "duration_ms": 342.87
+      "duration_us": 23286,
+      "duration_ms": 23.29
     },
     "load geometry_1": {
-      "duration_us": 448538,
-      "duration_ms": 448.54
+      "duration_us": 417130,
+      "duration_ms": 417.13
     },
     "load points_1": {
-      "duration_us": 144913725,
-      "duration_ms": 144913.73
+      "duration_us": 17337224,
+      "duration_ms": 17337.22
     },
     "upload points_1": {
-      "duration_us": 143769,
-      "duration_ms": 143.77
+      "duration_us": 113259,
+      "duration_ms": 113.26
     },
     "upload geometry_1": {
-      "duration_us": 8038,
-      "duration_ms": 8.04
+      "duration_us": 3616,
+      "duration_ms": 3.62
     },
     "build index_1": {
-      "duration_us": 9637,
-      "duration_ms": 9.64
+      "duration_us": 3995,
+      "duration_ms": 4.00
     },
     "warmup_1": {
-      "duration_us": 32465,
-      "duration_ms": 32.47
+      "duration_us": 25388,
+      "duration_ms": 25.39
     },
     "query_1": {
-      "duration_us": 30411,
-      "duration_ms": 30.41
+      "duration_us": 135515,
+      "duration_ms": 135.51
     },
     "download results_1": {
-      "duration_us": 1963,
-      "duration_ms": 1.96
+      "duration_us": 637,
+      "duration_ms": 0.64
     },
     "output_1": {
-      "duration_us": 18214,
-      "duration_ms": 18.21
+      "duration_us": 11565,
+      "duration_ms": 11.56
     },
     "cleanup_1": {
-      "duration_us": 25288,
-      "duration_ms": 25.29
+      "duration_us": 20568,
+      "duration_ms": 20.57
     }
   },
   "total": {
-    "duration_us": 146275398,
-    "duration_ms": 146275.40
+    "duration_us": 18356399,
+    "duration_ms": 18356.40
   }
 }
