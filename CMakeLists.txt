@@ -1,66 +1,45 @@
-
 cmake_minimum_required(VERSION 3.18)
 
 project(OptiXSingleRay LANGUAGES CXX CUDA)
 
+# Policy to correctly handle MSVC Runtime Library flags (Static vs Dynamic)
+cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0167 NEW)
 
-# Ensure all targets use the DLL version of the MSVC runtime (avoids CRT conflicts)
+# -----------------------------------------------------------------------
+# 1. Global Settings & Runtime Configuration
+# -----------------------------------------------------------------------
+
 if(MSVC)
+    # Use MultiThreaded Debug DLL (/MDd) for Debug builds to match Conda/Boost
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "MSVC runtime" FORCE)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Enable position-independent code for CUDA to work with conda compilers
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(NOT WIN32)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -fPIE")
-    # Add library search paths for system libraries (Linux only)
     link_directories(/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu)
 endif()
 
-# Export compile commands for IntelliSense
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Add preprocessor definitions to prevent Windows min/max macro conflicts
 if(WIN32)
     add_definitions(-DNOMINMAX)
 endif()
 
-# Find required packages from conda environment
-find_package(Boost REQUIRED COMPONENTS filesystem system)
-find_package(CGAL REQUIRED)
+# -----------------------------------------------------------------------
+# 2. Dependency Finding
+# -----------------------------------------------------------------------
 
-# TinyObjLoader - handle both conda and manual installation
-find_package(tinyobjloader CONFIG QUIET)
-if(NOT tinyobjloader_FOUND)
-    # Check for local tinyobjloader
-    set(TINYOBJLOADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/tinyobjloader)
-    if(EXISTS ${TINYOBJLOADER_DIR}/tiny_obj_loader.h AND EXISTS ${TINYOBJLOADER_DIR}/tiny_obj_loader.cc)
-        # Build tinyobjloader as a static library
-        add_library(tinyobjloader STATIC ${TINYOBJLOADER_DIR}/tiny_obj_loader.cc)
-        target_include_directories(tinyobjloader PUBLIC ${TINYOBJLOADER_DIR})
-        add_library(tinyobjloader::tinyobjloader ALIAS tinyobjloader)
-        message(STATUS "Building local TinyObjLoader from: ${TINYOBJLOADER_DIR}")
-    else()
-        message(FATAL_ERROR "TinyObjLoader not found. Please download it to external/tinyobjloader/")
-    endif()
-endif()
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
-
-# Detect conda environment and configure CUDA paths
+# Detect conda environment
 if(DEFINED ENV{CONDA_PREFIX})
     set(CONDA_PREFIX $ENV{CONDA_PREFIX})
     message(STATUS "Conda environment detected: ${CONDA_PREFIX}")
-    
-    # Add conda prefix to CMAKE_PREFIX_PATH for library discovery
     list(PREPEND CMAKE_PREFIX_PATH "${CONDA_PREFIX}")
     
-    # On Windows, conda CUDA is typically in Library/bin
-    # On Linux, it's in bin
     if(WIN32)
         set(CONDA_CUDA_BIN "${CONDA_PREFIX}/Library/bin")
         set(CONDA_CUDA_INCLUDE "${CONDA_PREFIX}/Library/include")
@@ -71,50 +50,87 @@ if(DEFINED ENV{CONDA_PREFIX})
         set(CONDA_CUDA_LIB "${CONDA_PREFIX}/lib")
     endif()
     
-    # Check if conda CUDA nvcc exists
+    # Configure CUDA compiler from Conda if available
     if(EXISTS "${CONDA_CUDA_BIN}/nvcc${CMAKE_EXECUTABLE_SUFFIX}" OR EXISTS "${CONDA_CUDA_BIN}/nvcc")
-        message(STATUS "Found conda CUDA toolkit at: ${CONDA_PREFIX}")
-        # Set CUDA paths explicitly for conda CUDA (before find_package)
         if(NOT DEFINED CUDA_PATH)
             set(CUDA_PATH "${CONDA_PREFIX}" CACHE PATH "CUDA installation path")
         endif()
         if(NOT DEFINED CMAKE_CUDA_COMPILER)
-            if(EXISTS "${CONDA_CUDA_BIN}/nvcc${CMAKE_EXECUTABLE_SUFFIX}")
-                set(CMAKE_CUDA_COMPILER "${CONDA_CUDA_BIN}/nvcc${CMAKE_EXECUTABLE_SUFFIX}" CACHE FILEPATH "CUDA compiler")
-            else()
-                set(CMAKE_CUDA_COMPILER "${CONDA_CUDA_BIN}/nvcc" CACHE FILEPATH "CUDA compiler")
-            endif()
+            file(GLOB NVCC_EXEC "${CONDA_CUDA_BIN}/nvcc*")
+            list(GET NVCC_EXEC 0 NVCC_PATH)
+            set(CMAKE_CUDA_COMPILER "${NVCC_PATH}" CACHE FILEPATH "CUDA compiler")
         endif()
-        # Add conda CUDA include and library paths
         include_directories("${CONDA_CUDA_INCLUDE}")
         link_directories("${CONDA_CUDA_LIB}")
-    else()
-        if(WIN32)
-            message(FATAL_ERROR "CONDA_PREFIX is set but conda CUDA toolkit not found. On Windows, conda CUDA is required. Please install: conda install -c nvidia cuda-toolkit=12.8")
-        else()
-            message(WARNING "CONDA_PREFIX is set but nvcc not found in conda environment. Falling back to system CUDA.")
-        endif()
     endif()
 endif()
 
+find_package(Boost REQUIRED COMPONENTS filesystem system)
+find_package(CGAL REQUIRED)
 find_package(CUDA REQUIRED)
-include(cmake/FindOptiX.cmake)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+include(cmake/FindOptiX.cmake)
 include(cmake/nvcuda_compile_module.cmake)
 
+# TinyObjLoader
+find_package(tinyobjloader CONFIG QUIET)
+if(NOT tinyobjloader_FOUND)
+    set(TINYOBJLOADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/tinyobjloader)
+    if(EXISTS ${TINYOBJLOADER_DIR}/tiny_obj_loader.h AND EXISTS ${TINYOBJLOADER_DIR}/tiny_obj_loader.cc)
+        add_library(tinyobjloader STATIC ${TINYOBJLOADER_DIR}/tiny_obj_loader.cc)
+        target_include_directories(tinyobjloader PUBLIC ${TINYOBJLOADER_DIR})
+        add_library(tinyobjloader::tinyobjloader ALIAS tinyobjloader)
+        
+        # Ensure static lib uses the same Runtime as the App (DLL)
+        if(MSVC)
+            set_property(TARGET tinyobjloader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        endif()
+    else()
+        message(FATAL_ERROR "TinyObjLoader not found. Please download it to external/tinyobjloader/")
+    endif()
+endif()
+
+# -----------------------------------------------------------------------
+# 3. Source Definitions
+# -----------------------------------------------------------------------
+
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# CUDA Sources
 set(CUDA_SOURCES ${SRC_DIR}/raytracing.cu)
-set(RESULT_COMPACTION_CUDA ${SRC_DIR}/result_compaction.cu)
-set(CPP_SOURCE   ${SRC_DIR}/rayspace.cpp)
-set(FILTER_REFINE_SOURCE ${SRC_DIR}/rayspace_filter_refine.cpp)
-## Removed legacy dataset_loader.cpp
-set(TRIANGULATE_SOURCE ${SRC_DIR}/triangulate_dataset.cpp)
-set(TRIANGULATION_LIB_SOURCE ${SRC_DIR}/triangulation.cpp)
-set(TIMER_SOURCE ${SRC_DIR}/timer.cpp)
+set(RESULT_COMPACTION_SOURCE ${SRC_DIR}/result_compaction.cu)
+
+# C++ Application Sources
+set(CPP_SOURCE    ${SRC_DIR}/applications/rayspace_main.cpp)
+set(FILTER_REFINE_SOURCE ${SRC_DIR}/applications/rayspace_filter_refine_main.cpp)
 set(TRIANGULATE_SINGLE_SOURCE ${SRC_DIR}/triangulate_single_polygon.cpp)
 set(PREPROCESS_SOURCE ${SRC_DIR}/preprocess_dataset.cpp)
 
-# New dataset loader classes
+# Helper Sources
+set(TRIANGULATION_LIB_SOURCE ${SRC_DIR}/triangulation.cpp)
+set(TIMER_SOURCE ${SRC_DIR}/timer.cpp)
+
+# Modules
+set(OPTIX_DIR ${SRC_DIR}/optix)
+set(GEOMETRY_DIR ${SRC_DIR}/geometry)
+set(RAYTRACING_DIR ${SRC_DIR}/raytracing)
+
+set(OPTIX_SOURCES
+    ${OPTIX_DIR}/OptixContext.cpp
+    ${OPTIX_DIR}/OptixPipeline.cpp
+    ${OPTIX_DIR}/OptixAccelerationStructure.cpp)
+
+set(GEOMETRY_SOURCES
+    ${GEOMETRY_DIR}/BoundingBox.cpp
+    ${GEOMETRY_DIR}/GeometryUploader.cpp)
+
+set(RAYTRACING_SOURCES
+    ${RAYTRACING_DIR}/RayLauncher.cpp
+    ${RAYTRACING_DIR}/ResultProcessor.cpp
+    ${RAYTRACING_DIR}/FilterRefine.cpp)
+
+# Dataset Modules
 set(DATASET_DIR ${SRC_DIR}/dataset)
 set(DATASET_COMMON_DIR ${DATASET_DIR}/common)
 set(DATASET_PREPROCESS_DIR ${DATASET_DIR}/preprocess)
@@ -128,6 +144,10 @@ set(DATASET_SOURCES
     ${DATASET_RUNTIME_DIR}/GeometryIO.cpp
     ${DATASET_RUNTIME_DIR}/PointIO.cpp)
 
+# -----------------------------------------------------------------------
+# 4. PTX Compilation
+# -----------------------------------------------------------------------
+
 set(PTX_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(OPTIX_MODULE_EXTENSION ".ptx")
 set(OPTIX_PROGRAM_TARGET "--ptx")
@@ -140,79 +160,73 @@ NVCUDA_COMPILE_MODULE(
     NVCC_OPTIONS  "${OPTIX_PROGRAM_TARGET}" "--gpu-architecture=sm_75" "--relocatable-device-code=true" "--expt-relaxed-constexpr" "-I${OptiX_INCLUDE}"
 )
 
-add_executable(raytracer ${CPP_SOURCE} ${RESULT_COMPACTION_CUDA} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
+# -----------------------------------------------------------------------
+# 5. Targets
+# -----------------------------------------------------------------------
 
-add_executable(raytracer_filter_refine ${FILTER_REFINE_SOURCE} ${RESULT_COMPACTION_CUDA} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
-
+# Added RESULT_COMPACTION_SOURCE to include GPU hit counting/compaction kernels
+add_executable(raytracer ${CPP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
+add_executable(raytracer_filter_refine ${FILTER_REFINE_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
 add_executable(triangulate_single_polygon ${TRIANGULATE_SINGLE_SOURCE} ${TRIANGULATION_LIB_SOURCE})
-
 add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
-# Platform-specific include directories
-target_include_directories(raytracer PRIVATE 
-    ${CUDA_INCLUDE_DIRS} 
-    ${OptiX_INCLUDE} 
-    ${SRC_DIR}
-    ${DATASET_COMMON_DIR}
-    ${DATASET_RUNTIME_DIR})
-
-target_include_directories(raytracer_filter_refine PRIVATE 
-    ${CUDA_INCLUDE_DIRS} 
-    ${OptiX_INCLUDE} 
-    ${SRC_DIR}
-    ${DATASET_COMMON_DIR}
-    ${DATASET_RUNTIME_DIR})
-
-target_include_directories(triangulate_single_polygon PRIVATE 
-    ${SRC_DIR}
-    ${DATASET_COMMON_DIR})
-    
-target_include_directories(preprocess_dataset PRIVATE 
-    ${CUDA_INCLUDE_DIRS} 
-    ${OptiX_INCLUDE}
-    ${SRC_DIR}
-    ${DATASET_COMMON_DIR}
-    ${DATASET_PREPROCESS_DIR})
-
-set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
-add_custom_target(copy_ptx DEPENDS ${PTX_FILES})
-add_dependencies(raytracer copy_ptx)
-add_dependencies(raytracer_filter_refine copy_ptx)
-
-# Copy PTX file to bin directory so executables can find it
-foreach(TARGET_NAME raytracer raytracer_filter_refine)
-    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${PTX_FILE}"
-        "$<TARGET_FILE_DIR:${TARGET_NAME}>/raytracing${OPTIX_MODULE_EXTENSION}"
-        COMMENT "Copying PTX file to ${TARGET_NAME} output directory"
-    )
+foreach(TARGET_NAME raytracer raytracer_filter_refine preprocess_dataset)
+    target_include_directories(${TARGET_NAME} PRIVATE 
+        ${CUDA_INCLUDE_DIRS} 
+        ${OptiX_INCLUDE} 
+        ${SRC_DIR}
+        ${OPTIX_DIR}
+        ${GEOMETRY_DIR}
+        ${RAYTRACING_DIR}
+        ${DATASET_COMMON_DIR}
+        ${DATASET_RUNTIME_DIR}
+        ${DATASET_PREPROCESS_DIR})
 endforeach()
 
+target_include_directories(triangulate_single_polygon PRIVATE ${SRC_DIR} ${DATASET_COMMON_DIR})
 
-# OptiX host functions are loaded through the stub headers at runtime, so linking the explicit
-# OptiX libraries is unnecessary and breaks the build when those import libraries are not found.
-# RayJoin works without that explicit linkage, so mirror the same approach here.
 target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 target_link_libraries(raytracer_filter_refine PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system ${CUDA_LIBRARIES})
+target_link_libraries(triangulate_single_polygon PRIVATE CGAL::CGAL Boost::filesystem Boost::system)
 
-# Define INCLUDE_OPTIX for raytracer only
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_filter_refine PRIVATE INCLUDE_OPTIX)
-
-# Linking for triangulate_single_polygon
-target_link_libraries(triangulate_single_polygon PRIVATE CGAL::CGAL Boost::filesystem Boost::system)
 
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_filter_refine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(triangulate_single_polygon PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(preprocess_dataset PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin) 
 
-# add_executable(triangulate_dataset ${TRIANGULATE_SOURCE} ${TRIANGULATION_LIB_SOURCE})
+# -----------------------------------------------------------------------
+# 6. Post-Build: Copy PTX & Fix DLLs (Robust Version)
+# -----------------------------------------------------------------------
 
-# target_include_directories(triangulate_dataset PRIVATE 
-#     ${CMAKE_CURRENT_SOURCE_DIR}/CDT/CDT/include
-#     C:/Users/anton/Documents/Uni/vcpkg/installed/x64-windows/include)
+set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
+add_custom_target(copy_ptx DEPENDS ${PTX_FILES})
+add_dependencies(raytracer copy_ptx)
+add_dependencies(raytracer_filter_refine copy_ptx)
 
-# set_target_properties(triangulate_dataset PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin) 
+foreach(TARGET_NAME raytracer raytracer_filter_refine)
+    # 1. Copy PTX
+    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${PTX_FILE}"
+        "$<TARGET_FILE_DIR:${TARGET_NAME}>/raytracing${OPTIX_MODULE_EXTENSION}"
+        COMMENT "Copying PTX file..."
+    )
+
+    # 2. Copy DLLs from Conda Binary folder (With existence checks to prevent build failure)
+    if(WIN32 AND DEFINED ENV{CONDA_PREFIX})
+        set(CONDA_BIN_DIR "$ENV{CONDA_PREFIX}/Library/bin")
+        add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+            # Check if file exists before copying to avoid error code 1
+            COMMAND powershell.exe -Command "if (Test-Path '${CONDA_BIN_DIR}/boost_filesystem*.dll') { Copy-Item '${CONDA_BIN_DIR}/boost_filesystem*.dll' -Destination '$<TARGET_FILE_DIR:${TARGET_NAME}>' -Force }"
+            COMMAND powershell.exe -Command "if (Test-Path '${CONDA_BIN_DIR}/boost_system*.dll') { Copy-Item '${CONDA_BIN_DIR}/boost_system*.dll' -Destination '$<TARGET_FILE_DIR:${TARGET_NAME}>' -Force }"
+            COMMAND powershell.exe -Command "if (Test-Path '${CONDA_BIN_DIR}/nvoptix.dll') { Copy-Item '${CONDA_BIN_DIR}/nvoptix.dll' -Destination '$<TARGET_FILE_DIR:${TARGET_NAME}>' -Force }"
+            COMMAND powershell.exe -Command "if (Test-Path '${CONDA_BIN_DIR}/cudart64*.dll') { Copy-Item '${CONDA_BIN_DIR}/cudart64*.dll' -Destination '$<TARGET_FILE_DIR:${TARGET_NAME}>' -Force }"
+            COMMAND powershell.exe -Command "if (Test-Path '${CONDA_BIN_DIR}/zlib.dll') { Copy-Item '${CONDA_BIN_DIR}/zlib.dll' -Destination '$<TARGET_FILE_DIR:${TARGET_NAME}>' -Force }"
+            COMMENT "Copying Boost/OptiX/CUDA/ZLib DLLs from ${CONDA_BIN_DIR} (if present)"
+        )
+    endif()
+endforeach()
