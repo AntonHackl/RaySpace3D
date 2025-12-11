@@ -11,6 +11,7 @@ dependencies:
   - gxx_linux-64=11.4.0
   - gcc_linux-64=11.4.0
   - sysroot_linux-64
+  - cuda-toolkit=12.8
   
   # C++ dependencies
   - cgal
