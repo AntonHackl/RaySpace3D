@@ -49,7 +49,6 @@ GeometryData MeshDatasetLoader::load(const std::string& directoryPath) {
     int currentIndex = 0;
 
     for (const auto& objFile : objFiles) {
-        if (objectIndex >= 50) break;
         printProgressBar(++currentIndex, objFiles.size());
 
         tinyobj::attrib_t attrib;

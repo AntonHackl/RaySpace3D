@@ -17,12 +17,9 @@ struct MeshOverlapLaunchParams {
     uint3* mesh2_indices;
     int* mesh2_triangle_to_object;
     
-    // Results
-    MeshOverlapResult* results;
-    int* hit_counter;
-    int max_results;
+    // Two-pass results
+    int* collision_counts;      // Pass 1: per-triangle collision counts
+    int* collision_offsets;     // Exclusive scan of counts (output positions)
+    MeshOverlapResult* results; // Pass 2: actual collision pairs
+    int pass;                   // 1 = count only, 2 = write results
 };
-
-// Launch functions are provided by MeshOverlapLauncher class
-// See src/raytracing/MeshOverlapLauncher.h
-

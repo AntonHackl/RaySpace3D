@@ -29,7 +29,7 @@ void MeshOverlapLauncher::createModule() {
     // Replace "raytracing.ptx" with "mesh_overlap.ptx"
     size_t pos = ptxPath.find("raytracing.ptx");
     if (pos != std::string::npos) {
-        ptxPath.replace(pos, 13, "mesh_overlap.ptx");
+        ptxPath.replace(pos, std::string("raytracing.ptx").size(), "mesh_overlap.ptx");
     } else {
         // Fallback: try to find mesh_overlap.ptx in the same directory
         size_t lastSlash = ptxPath.find_last_of("\\/");

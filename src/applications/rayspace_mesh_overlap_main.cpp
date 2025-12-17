@@ -17,11 +17,76 @@
 #include "../dataset/common/Geometry.h"
 #include "../dataset/runtime/GeometryIO.h"
 #include "../cuda/mesh_overlap.h"
+#include "../cuda/mesh_overlap_deduplication.h"
+#include "../cuda/scan_utils.h"
 #include "../common.h"
 #include "../optix/OptixHelpers.h"
 #include "../raytracing/MeshOverlapLauncher.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
+
+// Structure to hold query results
+struct QueryResults {
+    MeshOverlapResult* d_results1;
+    MeshOverlapResult* d_results2;
+    int numHits1;
+    int numHits2;
+};
+
+// Execute the two-pass overlap query
+QueryResults executeTwoPassQuery(
+    MeshOverlapLauncher& overlapLauncher,
+    MeshOverlapLaunchParams& params1,
+    MeshOverlapLaunchParams& params2,
+    int* d_counts1,
+    int* d_offsets1,
+    int* d_counts2,
+    int* d_offsets2,
+    int mesh1NumTriangles,
+    int mesh2NumTriangles,
+    bool verbose = true
+) {
+    // Reset counts
+    CUDA_CHECK(cudaMemset(d_counts1, 0, mesh1NumTriangles * sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_counts2, 0, mesh2NumTriangles * sizeof(int)));
+    
+    // PASS 1: Count collisions
+    params1.pass = 1;
+    params2.pass = 1;
+    overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    
+    // Perform exclusive scan to get offsets
+    int numHits1 = exclusive_scan_gpu(d_counts1, d_offsets1, mesh1NumTriangles);
+    int numHits2 = exclusive_scan_gpu(d_counts2, d_offsets2, mesh2NumTriangles);
+    
+    if (verbose) {
+        std::cout << "Kernel 1 will produce " << numHits1 << " collisions" << std::endl;
+        std::cout << "Kernel 2 will produce " << numHits2 << " collisions" << std::endl;
+    }
+    
+    // Allocate exact space needed for results
+    MeshOverlapResult* d_results1 = nullptr;
+    MeshOverlapResult* d_results2 = nullptr;
+    if (numHits1 > 0) {
+        CUDA_CHECK(cudaMalloc(&d_results1, numHits1 * sizeof(MeshOverlapResult)));
+    }
+    if (numHits2 > 0) {
+        CUDA_CHECK(cudaMalloc(&d_results2, numHits2 * sizeof(MeshOverlapResult)));
+    }
+    
+    // Update params for pass 2
+    params1.results = d_results1;
+    params1.pass = 2;
+    params2.results = d_results2;
+    params2.pass = 2;
+    
+    // PASS 2: Write collisions to pre-allocated positions
+    overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    
+    return {d_results1, d_results2, numHits1, numHits2};
+}
 
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
@@ -148,20 +213,16 @@ int main(int argc, char* argv[]) {
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
     
-    // Estimate max results (all triangles could potentially overlap)
-    int maxResults = std::max(mesh1NumTriangles, mesh2NumTriangles) * 10;
+    // Allocate counting and offset buffers for two-pass approach
+    int* d_counts1 = nullptr;
+    int* d_offsets1 = nullptr;
+    int* d_counts2 = nullptr;
+    int* d_offsets2 = nullptr;
     
-    MeshOverlapResult* d_results1 = nullptr;
-    MeshOverlapResult* d_results2 = nullptr;
-    int* d_hit_counter1 = nullptr;
-    int* d_hit_counter2 = nullptr;
-    
-    CUDA_CHECK(cudaMalloc(&d_results1, maxResults * sizeof(MeshOverlapResult)));
-    CUDA_CHECK(cudaMalloc(&d_results2, maxResults * sizeof(MeshOverlapResult)));
-    CUDA_CHECK(cudaMalloc(&d_hit_counter1, sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_hit_counter2, sizeof(int)));
-    CUDA_CHECK(cudaMemset(d_hit_counter1, 0, sizeof(int)));
-    CUDA_CHECK(cudaMemset(d_hit_counter2, 0, sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_counts1, mesh1NumTriangles * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_offsets1, mesh1NumTriangles * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_counts2, mesh2NumTriangles * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_offsets2, mesh2NumTriangles * sizeof(int)));
     
     MeshOverlapLaunchParams params1;
     params1.mesh1_vertices = mesh1Uploader.getVertices();
@@ -172,9 +233,10 @@ int main(int argc, char* argv[]) {
     params1.mesh2_vertices = mesh2Uploader.getVertices();
     params1.mesh2_indices = mesh2Uploader.getIndices();
     params1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
-    params1.results = d_results1;
-    params1.hit_counter = d_hit_counter1;
-    params1.max_results = maxResults;
+    params1.collision_counts = d_counts1;
+    params1.collision_offsets = d_offsets1;
+    params1.results = nullptr; // Will be allocated after pass 1
+    params1.pass = 1; // Start with counting pass
     
     MeshOverlapLaunchParams params2;
     params2.mesh1_vertices = mesh2Uploader.getVertices();
@@ -185,72 +247,71 @@ int main(int argc, char* argv[]) {
     params2.mesh2_vertices = mesh1Uploader.getVertices();
     params2.mesh2_indices = mesh1Uploader.getIndices();
     params2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
-    params2.results = d_results2;
-    params2.hit_counter = d_hit_counter2;
-    params2.max_results = maxResults;
+    params2.collision_counts = d_counts2;
+    params2.collision_offsets = d_offsets2;
+    params2.results = nullptr; // Will be allocated after pass 1
+    params2.pass = 1; // Start with counting pass
     
-    // Warmup runs
+    // Warmup runs - execute full two-pass query to warm up all kernels (OptiX + Thrust)
     timer.next("Warmup");
     if (warmupRuns > 0) {
-        std::cout << "Running " << warmupRuns << " warmup iterations..." << std::endl;
+        std::cout << "Running " << warmupRuns << " warmup iterations (full two-pass query)..." << std::endl;
         for (int warmup = 0; warmup < warmupRuns; ++warmup) {
-            CUDA_CHECK(cudaMemset(d_hit_counter1, 0, sizeof(int)));
-            CUDA_CHECK(cudaMemset(d_hit_counter2, 0, sizeof(int)));
-            overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
-            overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+            QueryResults warmupResults = executeTwoPassQuery(
+                overlapLauncher, params1, params2,
+                d_counts1, d_offsets1, d_counts2, d_offsets2,
+                mesh1NumTriangles, mesh2NumTriangles,
+                false // Don't print verbose output during warmup
+            );
+            // Cleanup warmup results
+            if (warmupResults.d_results1) CUDA_CHECK(cudaFree(warmupResults.d_results1));
+            if (warmupResults.d_results2) CUDA_CHECK(cudaFree(warmupResults.d_results2));
         }
     }
     
     timer.next("Query");
     
-    // Execute bidirectional overlap detection
-    if (numberOfRuns > 1) {
-        std::cout << "\n=== Running " << numberOfRuns << " iterations for performance measurement ===" << std::endl;
-        for (int run = 0; run < numberOfRuns; ++run) {
-            std::cout << "Run " << (run + 1) << "/" << numberOfRuns << std::endl;
-            CUDA_CHECK(cudaMemset(d_hit_counter1, 0, sizeof(int)));
-            CUDA_CHECK(cudaMemset(d_hit_counter2, 0, sizeof(int)));
-            
-            // Kernel 1: Mesh1 edges vs Mesh2 AS
-            overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
-            
-            // Kernel 2: Mesh2 edges vs Mesh1 AS
-            overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
-        }
-    } else {
-        std::cout << "\n=== Executing mesh overlap detection ===" << std::endl;
-        std::cout << "Kernel 1: Mesh1 (" << mesh1NumTriangles << " triangles) edges vs Mesh2 AS" << std::endl;
-        overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
-        
-        std::cout << "Kernel 2: Mesh2 (" << mesh2NumTriangles << " triangles) edges vs Mesh1 AS" << std::endl;
-        overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
-    }
+    // Execute the actual timed query
+    std::cout << "\n=== Executing mesh overlap detection ===" << std::endl;
+    QueryResults queryResults = executeTwoPassQuery(
+        overlapLauncher, params1, params2,
+        d_counts1, d_offsets1, d_counts2, d_offsets2,
+        mesh1NumTriangles, mesh2NumTriangles,
+        true // Verbose output
+    );
+    
+    MeshOverlapResult* d_results1 = queryResults.d_results1;
+    MeshOverlapResult* d_results2 = queryResults.d_results2;
+    int numHits1 = queryResults.numHits1;
+    int numHits2 = queryResults.numHits2;
+    
+    timer.next("GPU Deduplication");
+    
+    std::cout << "\nDeduplication: Processing " << numHits1 << " + " << numHits2 
+              << " = " << (numHits1 + numHits2) << " total overlaps" << std::endl;
+    
+    // Allocate merged buffer on GPU for deduplication
+    MeshOverlapResult* d_merged_results = nullptr;
+    int totalHits = numHits1 + numHits2;
+    CUDA_CHECK(cudaMalloc(&d_merged_results, totalHits * sizeof(MeshOverlapResult)));
+    
+    // Merge and deduplicate on GPU using Thrust
+    int numUnique = merge_and_deduplicate_gpu(
+        d_results1, numHits1,
+        d_results2, numHits2,
+        d_merged_results
+    );
+    
+    std::cout << "Deduplication: Found " << numUnique << " unique pairs" << std::endl;
     
     timer.next("Download Results");
     
-    // Download results
-    int numHits1 = 0;
-    int numHits2 = 0;
-    CUDA_CHECK(cudaMemcpy(&numHits1, d_hit_counter1, sizeof(int), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(&numHits2, d_hit_counter2, sizeof(int), cudaMemcpyDeviceToHost));
-    
-    std::vector<MeshOverlapResult> results1(numHits1);
-    std::vector<MeshOverlapResult> results2(numHits2);
-    
-    if (numHits1 > 0) {
-        CUDA_CHECK(cudaMemcpy(results1.data(), d_results1, numHits1 * sizeof(MeshOverlapResult), cudaMemcpyDeviceToHost));
-    }
-    if (numHits2 > 0) {
-        CUDA_CHECK(cudaMemcpy(results2.data(), d_results2, numHits2 * sizeof(MeshOverlapResult), cudaMemcpyDeviceToHost));
-    }
-    
-    // Merge and deduplicate results
-    std::set<std::pair<int, int>> uniquePairs;
-    for (const auto& r : results1) {
-        uniquePairs.insert({r.object_id_mesh1, r.object_id_mesh2});
-    }
-    for (const auto& r : results2) {
-        uniquePairs.insert({r.object_id_mesh2, r.object_id_mesh1});
+    // Download only the unique results
+    std::vector<MeshOverlapResult> uniqueResults(numUnique);
+    if (numUnique > 0) {
+        CUDA_CHECK(cudaMemcpy(uniqueResults.data(), d_merged_results, 
+                              numUnique * sizeof(MeshOverlapResult), 
+                              cudaMemcpyDeviceToHost));
     }
     
     timer.next("Output");
@@ -260,14 +321,15 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh2 triangles: " << mesh2NumTriangles << std::endl;
     std::cout << "Overlaps from Kernel 1: " << numHits1 << std::endl;
     std::cout << "Overlaps from Kernel 2: " << numHits2 << std::endl;
-    std::cout << "Unique object pairs: " << uniquePairs.size() << std::endl;
+    std::cout << "Total overlaps before deduplication: " << totalHits << std::endl;
+    std::cout << "Unique object pairs (after GPU deduplication): " << numUnique << std::endl;
     
     if (exportResults) {
         std::cout << "Exporting results to mesh_overlap_results.csv" << std::endl;
         std::ofstream csvFile("mesh_overlap_results.csv");
         csvFile << "object_id_mesh1,object_id_mesh2\n";
-        for (const auto& pair : uniquePairs) {
-            csvFile << pair.first << "," << pair.second << "\n";
+        for (const auto& result : uniqueResults) {
+            csvFile << result.object_id_mesh1 << "," << result.object_id_mesh2 << "\n";
         }
         csvFile.close();
     }
@@ -275,10 +337,13 @@ int main(int argc, char* argv[]) {
     timer.next("Cleanup");
     
     // Cleanup
-    CUDA_CHECK(cudaFree(d_results1));
-    CUDA_CHECK(cudaFree(d_results2));
-    CUDA_CHECK(cudaFree(d_hit_counter1));
-    CUDA_CHECK(cudaFree(d_hit_counter2));
+    if (d_results1) CUDA_CHECK(cudaFree(d_results1));
+    if (d_results2) CUDA_CHECK(cudaFree(d_results2));
+    CUDA_CHECK(cudaFree(d_merged_results));
+    CUDA_CHECK(cudaFree(d_counts1));
+    CUDA_CHECK(cudaFree(d_offsets1));
+    CUDA_CHECK(cudaFree(d_counts2));
+    CUDA_CHECK(cudaFree(d_offsets2));
     
     mesh1Data.pinnedBuffers.free();
     mesh2Data.pinnedBuffers.free();

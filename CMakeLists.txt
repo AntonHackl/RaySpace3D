@@ -125,6 +125,8 @@ set(CUDA_DIR ${SRC_DIR}/cuda)
 set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu)
 set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
 set(MESH_OVERLAP_SOURCE ${CUDA_DIR}/mesh_overlap.cu)
+set(MESH_OVERLAP_DEDUP_SOURCE ${CUDA_DIR}/mesh_overlap_deduplication.cu)
+set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
 
 # C++ Application Sources
 set(CPP_SOURCE    ${SRC_DIR}/applications/rayspace_main.cpp)
@@ -192,9 +194,11 @@ NVCUDA_COMPILE_MODULE(
 # -----------------------------------------------------------------------
 
 # Added RESULT_COMPACTION_SOURCE to include GPU hit counting/compaction kernels
+# Added MESH_OVERLAP_DEDUP_SOURCE for GPU-based deduplication using Thrust
+# Added SCAN_UTILS_SOURCE for exclusive scan operations
 add_executable(raytracer ${CPP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
 add_executable(raytracer_filter_refine ${FILTER_REFINE_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
-add_executable(raytracer_mesh_overlap ${MESH_OVERLAP_APP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
+add_executable(raytracer_mesh_overlap ${MESH_OVERLAP_APP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE} ${MESH_OVERLAP_DEDUP_SOURCE} ${SCAN_UTILS_SOURCE})
 add_executable(triangulate_single_polygon ${TRIANGULATE_SINGLE_SOURCE} ${TRIANGULATION_LIB_SOURCE})
 add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 

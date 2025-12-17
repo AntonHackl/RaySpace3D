@@ -24,7 +24,7 @@ __device__ float3 normalize3f(const float3& v) {
 }
 
 // OptiX Raygen program: Process Mesh1 edges against Mesh2 acceleration structure
-// Each thread processes one triangle, checking all 3 edges
+// Two-pass approach: Pass 1 = count collisions, Pass 2 = write collisions
 extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
@@ -50,6 +50,9 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     float3 edgeEnds[3] = {v1, v2, v0};
     
     const float epsilon = 1e-6f;
+    
+    int collisionCount = 0;
+    int writeOffset = (mesh_overlap_params.pass == 2) ? mesh_overlap_params.collision_offsets[triangleIdx] : 0;
     
     // Check each edge
     for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
@@ -92,22 +95,28 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
             float t = __uint_as_float(distance);
             // Check if hit is within the edge length
             if (t >= epsilon && t <= edgeLength + epsilon) {
-                // Get object ID from Mesh2
-                int objectIdMesh2 = mesh_overlap_params.mesh2_triangle_to_object[triangleIndex];
-                
-                // Record the overlap pair (atomically to avoid race conditions)
-                int resultIdx = atomicAdd(mesh_overlap_params.hit_counter, 1);
-                if (resultIdx < mesh_overlap_params.max_results) {
-                    mesh_overlap_params.results[resultIdx].object_id_mesh1 = objectIdMesh1;
-                    mesh_overlap_params.results[resultIdx].object_id_mesh2 = objectIdMesh2;
+                if (mesh_overlap_params.pass == 1) {
+                    // Pass 1: Just count
+                    collisionCount++;
+                } else {
+                    // Pass 2: Write to pre-allocated position
+                    int objectIdMesh2 = mesh_overlap_params.mesh2_triangle_to_object[triangleIndex];
+                    mesh_overlap_params.results[writeOffset].object_id_mesh1 = objectIdMesh1;
+                    mesh_overlap_params.results[writeOffset].object_id_mesh2 = objectIdMesh2;
+                    writeOffset++;
                 }
             }
         }
     }
+    
+    // Pass 1: Store count
+    if (mesh_overlap_params.pass == 1) {
+        mesh_overlap_params.collision_counts[triangleIdx] = collisionCount;
+    }
 }
 
 // OptiX Raygen program: Process Mesh2 edges against Mesh1 acceleration structure
-// Same as raygen_mesh1_to_mesh2 but with reversed roles
+// Two-pass approach: Pass 1 = count collisions, Pass 2 = write collisions
 extern "C" __global__ void __raygen__mesh2_to_mesh1() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
@@ -133,6 +142,9 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
     float3 edgeEnds[3] = {v1, v2, v0};
     
     const float epsilon = 1e-6f;
+    
+    int collisionCount = 0;
+    int writeOffset = (mesh_overlap_params.pass == 2) ? mesh_overlap_params.collision_offsets[triangleIdx] : 0;
     
     // Check each edge
     for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
@@ -175,18 +187,23 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
             float t = __uint_as_float(distance);
             // Check if hit is within the edge length
             if (t >= epsilon && t <= edgeLength + epsilon) {
-                // Get object ID from Mesh1
-                int objectIdMesh1 = mesh_overlap_params.mesh2_triangle_to_object[triangleIndex];
-                
-                // Record the overlap pair (atomically to avoid race conditions)
-                // Note: order is reversed (mesh2, mesh1) compared to kernel_1
-                int resultIdx = atomicAdd(mesh_overlap_params.hit_counter, 1);
-                if (resultIdx < mesh_overlap_params.max_results) {
-                    mesh_overlap_params.results[resultIdx].object_id_mesh1 = objectIdMesh2;
-                    mesh_overlap_params.results[resultIdx].object_id_mesh2 = objectIdMesh1;
+                if (mesh_overlap_params.pass == 1) {
+                    // Pass 1: Just count
+                    collisionCount++;
+                } else {
+                    // Pass 2: Write to pre-allocated position
+                    int objectIdMesh1 = mesh_overlap_params.mesh2_triangle_to_object[triangleIndex];
+                    mesh_overlap_params.results[writeOffset].object_id_mesh1 = objectIdMesh1;
+                    mesh_overlap_params.results[writeOffset].object_id_mesh2 = objectIdMesh2;
+                    writeOffset++;
                 }
             }
         }
+    }
+    
+    // Pass 1: Store count
+    if (mesh_overlap_params.pass == 1) {
+        mesh_overlap_params.collision_counts[triangleIdx] = collisionCount;
     }
 }
 

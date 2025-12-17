@@ -12,7 +12,7 @@
                 "${workspaceFolder}/build/bin/Debug/preprocess_dataset.exe",
                 // "--dataset", "C:\\Users\\anton\\Documents\\Uni\\Hugging Face\\shapenet_data_uncompressed",
                 "--dataset", "${workspaceFolder}/generated_files/Query/",
-                "--output-geometry", "${workspaceFolder}/generated_files/query.txt",
+                "--output-geometry", "${workspaceFolder}/generated_files/mesh_b.txt",
                 "--output-timing", "${workspaceFolder}/preprocessing_query.json"
             ],
             "stopAtEntry": false,
@@ -148,6 +148,42 @@
                 "--chunk", "2000000",
                 "--precision", "6",
                 "--plot"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Mesh Overlap Query",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "powershell.exe",
+            "args": [
+                "-File",
+                "${workspaceFolder}/scripts/conda-run.ps1",
+                "${workspaceFolder}/build/bin/Debug/raytracer_mesh_overlap.exe",
+                "--mesh1", "${workspaceFolder}/generated_files/mesh_a.txt",
+                "--mesh2", "${workspaceFolder}/generated_files/mesh_b.txt",
+                "--output", "${workspaceFolder}/generated_files/mesh_overlap_timing.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "CMake: build"
+        },
+        {
+            "name": "Generate Test Cubes (100, size 2-7, 50^3)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/generate_test_cubes.py",
+            "args": [
+                "--num-cubes", "100000",
+                "--min-size", "2",
+                "--max-size", "7",
+                "--extent-x", "0", "100",
+                "--extent-y", "0", "100",
+                "--extent-z", "0", "100",
+                "--output-dir", "${workspaceFolder}/generated_files/Query"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
