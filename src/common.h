@@ -33,3 +33,8 @@ struct LaunchParams {
     RayResult* compact_result;  // Output buffer for hits only
     int* hit_counter;           // Atomic counter for compact array index
 };
+
+struct MeshOverlapResult {
+    int object_id_mesh1;       // Object ID from Mesh1's triangleToObject
+    int object_id_mesh2;       // Object ID from Mesh2's triangleToObject
+};

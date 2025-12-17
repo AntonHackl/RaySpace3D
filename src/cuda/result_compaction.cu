@@ -1,5 +1,5 @@
 #include <cuda_runtime.h>
-#include "common.h"
+#include "../common.h"
 
 // Kernel to count hits (hit = polygon_index != -1)
 __global__ void count_hits_kernel(const RayResult* results, int num_results, int* hit_count) {
@@ -62,3 +62,4 @@ void compact_hits_gpu(const RayResult* d_input, RayResult* d_output,
 }
 
 } // extern "C"
+

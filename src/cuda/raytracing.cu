@@ -1,7 +1,7 @@
 #include <optix_device.h>
 #include <optix.h>
 #include <cuda_runtime.h>
-#include "common.h"
+#include "../common.h"
 
 extern "C" __constant__ LaunchParams params;
 
@@ -23,6 +23,7 @@ extern "C" __global__ void __raygen__rg()
     const float epsilon = 1e-6f;
     const float max_distance = 1e16f;
     const int max_iterations = 10000;
+    unsigned int firstTriangleIndex = 0;
 
     for (int iter = 0; iter < max_iterations; ++iter) {
         unsigned int hitFlag = 0;
@@ -52,6 +53,10 @@ extern "C" __global__ void __raygen__rg()
             break;
         }
 
+        if (intersection_count == 0) {
+            firstTriangleIndex = triangleIndex;
+        }
+
         intersection_count++;
         t_min = t;
 
@@ -63,12 +68,12 @@ extern "C" __global__ void __raygen__rg()
     bool isInside = (intersection_count % 2 == 1);
     
     params.result[ray_id].ray_id = ray_id;
-    params.result[ray_id].polygon_index = isInside ? 0 : -1;
+    params.result[ray_id].polygon_index = isInside ? static_cast<int>(params.triangle_to_object[firstTriangleIndex]) : -1;
     
     if (isInside && params.compact_result != nullptr && params.hit_counter != nullptr) {
         int compact_idx = atomicAdd(params.hit_counter, 1);
         params.compact_result[compact_idx].ray_id = ray_id;
-        params.compact_result[compact_idx].polygon_index = 0;
+        params.compact_result[compact_idx].polygon_index = static_cast<int>(params.triangle_to_object[firstTriangleIndex]);
     }
 }
 
@@ -89,3 +94,4 @@ extern "C" __global__ void __closesthit__ch()
     optixSetPayload_1(__float_as_uint(t));
     optixSetPayload_2(triangleIndex);
 }
+

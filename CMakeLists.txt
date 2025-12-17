@@ -121,12 +121,15 @@ endif()
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # CUDA Sources
-set(CUDA_SOURCES ${SRC_DIR}/raytracing.cu)
-set(RESULT_COMPACTION_SOURCE ${SRC_DIR}/result_compaction.cu)
+set(CUDA_DIR ${SRC_DIR}/cuda)
+set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu)
+set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
+set(MESH_OVERLAP_SOURCE ${CUDA_DIR}/mesh_overlap.cu)
 
 # C++ Application Sources
 set(CPP_SOURCE    ${SRC_DIR}/applications/rayspace_main.cpp)
 set(FILTER_REFINE_SOURCE ${SRC_DIR}/applications/rayspace_filter_refine_main.cpp)
+set(MESH_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_overlap_main.cpp)
 set(TRIANGULATE_SINGLE_SOURCE ${SRC_DIR}/triangulate_single_polygon.cpp)
 set(PREPROCESS_SOURCE ${SRC_DIR}/preprocess_dataset.cpp)
 
@@ -151,7 +154,8 @@ set(GEOMETRY_SOURCES
 set(RAYTRACING_SOURCES
     ${RAYTRACING_DIR}/RayLauncher.cpp
     ${RAYTRACING_DIR}/ResultProcessor.cpp
-    ${RAYTRACING_DIR}/FilterRefine.cpp)
+    ${RAYTRACING_DIR}/FilterRefine.cpp
+    ${RAYTRACING_DIR}/MeshOverlapLauncher.cpp)
 
 # Dataset Modules
 set(DATASET_DIR ${SRC_DIR}/dataset)
@@ -190,14 +194,16 @@ NVCUDA_COMPILE_MODULE(
 # Added RESULT_COMPACTION_SOURCE to include GPU hit counting/compaction kernels
 add_executable(raytracer ${CPP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
 add_executable(raytracer_filter_refine ${FILTER_REFINE_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
+add_executable(raytracer_mesh_overlap ${MESH_OVERLAP_APP_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES} ${OPTIX_SOURCES} ${GEOMETRY_SOURCES} ${RAYTRACING_SOURCES} ${RESULT_COMPACTION_SOURCE})
 add_executable(triangulate_single_polygon ${TRIANGULATE_SINGLE_SOURCE} ${TRIANGULATION_LIB_SOURCE})
 add_executable(preprocess_dataset ${PREPROCESS_SOURCE} ${TRIANGULATION_LIB_SOURCE} ${TIMER_SOURCE} ${DATASET_SOURCES})
 
-foreach(TARGET_NAME raytracer raytracer_filter_refine preprocess_dataset)
+foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap preprocess_dataset)
     target_include_directories(${TARGET_NAME} PRIVATE 
         ${CUDA_INCLUDE_DIRS} 
         ${OptiX_INCLUDE} 
         ${SRC_DIR}
+        ${CUDA_DIR}
         ${OPTIX_DIR}
         ${GEOMETRY_DIR}
         ${RAYTRACING_DIR}
@@ -210,14 +216,17 @@ target_include_directories(triangulate_single_polygon PRIVATE ${SRC_DIR} ${DATAS
 
 target_link_libraries(raytracer PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 target_link_libraries(raytracer_filter_refine PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
+target_link_libraries(raytracer_mesh_overlap PRIVATE ${CUDA_LIBRARIES} CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system)
 target_link_libraries(preprocess_dataset PRIVATE CGAL::CGAL tinyobjloader::tinyobjloader Boost::filesystem Boost::system ${CUDA_LIBRARIES})
 target_link_libraries(triangulate_single_polygon PRIVATE CGAL::CGAL Boost::filesystem Boost::system)
 
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_filter_refine PRIVATE INCLUDE_OPTIX)
+target_compile_definitions(raytracer_mesh_overlap PRIVATE INCLUDE_OPTIX)
 
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_filter_refine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set_target_properties(raytracer_mesh_overlap PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(triangulate_single_polygon PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(preprocess_dataset PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin) 
 
@@ -226,9 +235,11 @@ set_target_properties(preprocess_dataset PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${C
 # -----------------------------------------------------------------------
 
 set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
+set(MESH_OVERLAP_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}")
 add_custom_target(copy_ptx DEPENDS ${PTX_FILES})
 add_dependencies(raytracer copy_ptx)
 add_dependencies(raytracer_filter_refine copy_ptx)
+add_dependencies(raytracer_mesh_overlap copy_ptx)
 
 foreach(TARGET_NAME raytracer raytracer_filter_refine)
     # 1. Copy PTX
@@ -238,7 +249,23 @@ foreach(TARGET_NAME raytracer raytracer_filter_refine)
         "$<TARGET_FILE_DIR:${TARGET_NAME}>/raytracing${OPTIX_MODULE_EXTENSION}"
         COMMENT "Copying PTX file..."
     )
+endforeach()
 
+# Copy PTX files for mesh_overlap target
+add_custom_command(TARGET raytracer_mesh_overlap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${PTX_FILE}"
+    "$<TARGET_FILE_DIR:raytracer_mesh_overlap>/raytracing${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying raytracing.ptx..."
+)
+add_custom_command(TARGET raytracer_mesh_overlap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${MESH_OVERLAP_PTX_FILE}"
+    "$<TARGET_FILE_DIR:raytracer_mesh_overlap>/mesh_overlap${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying mesh_overlap.ptx..."
+)
+
+foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap)
     # 2. Copy DLLs from Conda Binary folder (With existence checks to prevent build failure)
     if(WIN32 AND DEFINED ENV{CONDA_PREFIX})
         set(CONDA_BIN_DIR "$ENV{CONDA_PREFIX}/Library/bin")

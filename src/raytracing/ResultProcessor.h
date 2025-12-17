@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../common.h"
-#include "../result_compaction.h"
+#include "../cuda/result_compaction.h"
 #include <vector>
 
 class ResultProcessor {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common.h"
+#include "../common.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,3 +20,4 @@ void compact_hits_gpu(const RayResult* d_input, RayResult* d_output,
 #ifdef __cplusplus
 }
 #endif
+
