@@ -1,135 +1,124 @@
 #include "MeshDatasetLoader.h"
 
 #include <iostream>
-#include <map>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "../common/Geometry.h"
 #include "../common/DatasetUtils.h"
 #include <tiny_obj_loader.h>
 #include <filesystem>
-#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
-#include <CGAL/Surface_mesh.h>
 
-
-typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
-typedef CGAL::Surface_mesh<K::Point_3> Surface_mesh;
-
-GeometryData MeshDatasetLoader::load(const std::string& directoryPath) {
+GeometryData MeshDatasetLoader::load(const std::string& filePath) {
     GeometryData geometry;
 
     std::cout << "=== Mesh Dataset Loading ===" << std::endl;
-    std::cout << "Loading meshes from directory: " << directoryPath << std::endl;
+    std::cout << "Loading mesh from file: " << filePath << std::endl;
 
-    if (!std::filesystem::exists(directoryPath)) {
-        std::cerr << "Error: Directory does not exist: " << directoryPath << std::endl;
+    if (!std::filesystem::exists(filePath)) {
+        std::cerr << "Error: File does not exist: " << filePath << std::endl;
         return geometry;
     }
 
-    if (!std::filesystem::is_directory(directoryPath)) {
-        std::cerr << "Error: Path is not a directory: " << directoryPath << std::endl;
+    if (!std::filesystem::is_regular_file(filePath)) {
+        std::cerr << "Error: Path is not a regular file: " << filePath << std::endl;
         return geometry;
     }
 
-    std::vector<std::filesystem::path> objFiles;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(directoryPath)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".obj") {
-            objFiles.push_back(entry.path());
-        }
-    }
-
-    if (objFiles.empty()) {
-        std::cerr << "Error: No .obj files found in directory: " << directoryPath << std::endl;
+    if (std::filesystem::path(filePath).extension() != ".obj") {
+        std::cerr << "Error: File is not a .obj file: " << filePath << std::endl;
         return geometry;
     }
 
-    std::cout << "Found " << objFiles.size() << " .obj files" << std::endl;
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filePath.c_str());
+
+    if (!err.empty()) {
+        std::cerr << "Error loading .obj file: " << err << std::endl;
+        return geometry;
+    }
+
+    if (!ret) {
+        std::cerr << "Error: Failed to load .obj file: " << filePath << std::endl;
+        return geometry;
+    }
+
+    if (shapes.empty()) {
+        std::cerr << "Error: No shapes found in .obj file: " << filePath << std::endl;
+        return geometry;
+    }
+
+    std::cout << "Found " << shapes.size() << " object(s) in file" << std::endl;
 
     int objectIndex = 0;
-    int skippedFiles = 0;
-    int currentIndex = 0;
+    int skippedShapes = 0;
 
-    for (const auto& objFile : objFiles) {
-        printProgressBar(++currentIndex, objFiles.size());
-
-        tinyobj::attrib_t attrib;
-        std::vector<tinyobj::shape_t> shapes;
-        std::vector<tinyobj::material_t> materials;
-        std::string warn, err;
-
-        bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, objFile.string().c_str());
-
-        if (!err.empty()) { skippedFiles++; continue; }
-        if (!ret) { skippedFiles++; continue; }
-
-        bool allTriangulated = true;
-        for (const auto& shape : shapes) {
-            for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
-                if (shape.mesh.num_face_vertices[f] != 3) { allTriangulated = false; break; }
-            }
-            if (!allTriangulated) break;
-        }
-        if (!allTriangulated) { skippedFiles++; continue; }
-
-        Surface_mesh mesh;
-        std::vector<Surface_mesh::Vertex_index> vertex_indices;
-        vertex_indices.reserve(attrib.vertices.size() / 3);
-        for (size_t v = 0; v < attrib.vertices.size() / 3; ++v) {
-            K::Point_3 p(attrib.vertices[3 * v + 0], attrib.vertices[3 * v + 1], attrib.vertices[3 * v + 2]);
-            vertex_indices.push_back(mesh.add_vertex(p));
+    for (size_t shapeIdx = 0; shapeIdx < shapes.size(); ++shapeIdx) {
+        const auto& shape = shapes[shapeIdx];
+        if (shapeIdx % 100 == 0 || shapeIdx == shapes.size() - 1) {
+            printProgressBar(shapeIdx + 1, shapes.size());
         }
 
-        for (const auto& shape : shapes) {
-            size_t index_offset = 0;
-            for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
-                int fv = shape.mesh.num_face_vertices[f];
-                if (fv != 3) { skippedFiles++; mesh.clear(); break; }
-                std::vector<Surface_mesh::Vertex_index> face_verts;
-                face_verts.push_back(vertex_indices[shape.mesh.indices[index_offset + 0].vertex_index]);
-                face_verts.push_back(vertex_indices[shape.mesh.indices[index_offset + 1].vertex_index]);
-                face_verts.push_back(vertex_indices[shape.mesh.indices[index_offset + 2].vertex_index]);
-                auto fdesc = mesh.add_face(face_verts);
-                (void)fdesc;
-                index_offset += fv;
-            }
-            if (mesh.number_of_faces() == 0) break;
-        }
-
-        mesh.collect_garbage();
-
-        if (mesh.number_of_faces() == 0) {
-            skippedFiles++;
+        if (shape.mesh.num_face_vertices.empty()) {
+            skippedShapes++;
             continue;
         }
 
-        // Only check if mesh is closed (watertight) and valid
-        if (!(CGAL::is_closed(mesh) && CGAL::is_valid_polygon_mesh(mesh))) {
-            skippedFiles++;
-            continue;
+        bool allTriangular = true;
+        std::unordered_set<unsigned int> used_vertex_indices;
+        size_t index_offset = 0;
+        
+        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+            int fv = shape.mesh.num_face_vertices[f];
+            if (fv != 3) {
+                allTriangular = false;
+                break;
+            }
+            used_vertex_indices.insert(shape.mesh.indices[index_offset + 0].vertex_index);
+            used_vertex_indices.insert(shape.mesh.indices[index_offset + 1].vertex_index);
+            used_vertex_indices.insert(shape.mesh.indices[index_offset + 2].vertex_index);
+            index_offset += fv;
         }
 
-        mesh.collect_garbage();
+        if (!allTriangular || used_vertex_indices.empty()) {
+            skippedShapes++;
+            continue;
+        }
 
         size_t vertexOffset = geometry.vertices.size();
-        for (auto v : mesh.vertices()) {
-            const K::Point_3& p = mesh.point(v);
-            geometry.vertices.push_back({static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())});
-        }
+        std::unordered_map<unsigned int, unsigned int> vertex_map;
+        unsigned int local_idx = 0;
 
-        std::map<Surface_mesh::Vertex_index, unsigned int> vertex_map;
-        unsigned int idx = 0;
-        for (auto v : mesh.vertices()) {
-            vertex_map[v] = vertexOffset + idx++;
-        }
-
-        for (auto f : mesh.faces()) {
-            std::vector<unsigned int> face_indices;
-            for (auto v : vertices_around_face(mesh.halfedge(f), mesh)) {
-                face_indices.push_back(vertex_map[v]);
+        for (unsigned int global_vidx : used_vertex_indices) {
+            if (global_vidx * 3 + 2 < attrib.vertices.size()) {
+                float3 vertex;
+                vertex.x = attrib.vertices[3 * global_vidx + 0];
+                vertex.y = attrib.vertices[3 * global_vidx + 1];
+                vertex.z = attrib.vertices[3 * global_vidx + 2];
+                geometry.vertices.push_back(vertex);
+                vertex_map[global_vidx] = vertexOffset + local_idx++;
             }
-            if (face_indices.size() == 3) {
-                geometry.indices.push_back({face_indices[0], face_indices[1], face_indices[2]});
+        }
+
+        index_offset = 0;
+        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
+            unsigned int v0_idx = shape.mesh.indices[index_offset + 0].vertex_index;
+            unsigned int v1_idx = shape.mesh.indices[index_offset + 1].vertex_index;
+            unsigned int v2_idx = shape.mesh.indices[index_offset + 2].vertex_index;
+            
+            auto it0 = vertex_map.find(v0_idx);
+            auto it1 = vertex_map.find(v1_idx);
+            auto it2 = vertex_map.find(v2_idx);
+            
+            if (it0 != vertex_map.end() && it1 != vertex_map.end() && it2 != vertex_map.end()) {
+                geometry.indices.push_back({it0->second, it1->second, it2->second});
                 geometry.triangleToObject.push_back(objectIndex);
             }
+            index_offset += 3;
         }
 
         objectIndex++;
@@ -138,8 +127,8 @@ GeometryData MeshDatasetLoader::load(const std::string& directoryPath) {
     geometry.totalTriangles = geometry.indices.size();
 
     std::cout << "\n=== Mesh Loading Complete ===" << std::endl;
-    std::cout << "Successfully loaded " << objectIndex << " .obj files" << std::endl;
-    std::cout << "Skipped " << skippedFiles << " files" << std::endl;
+    std::cout << "Successfully loaded " << objectIndex << " object(s)" << std::endl;
+    std::cout << "Skipped " << skippedShapes << " object(s)" << std::endl;
     std::cout << "Total vertices: " << geometry.vertices.size() << std::endl;
     std::cout << "Total triangles: " << geometry.totalTriangles << std::endl;
     std::cout << "=============================\n" << std::endl;

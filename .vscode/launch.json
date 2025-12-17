@@ -10,8 +10,8 @@
                 "-File",
                 "${workspaceFolder}/scripts/conda-run.ps1",
                 "${workspaceFolder}/build/bin/Debug/preprocess_dataset.exe",
-                // "--dataset", "C:\\Users\\anton\\Documents\\Uni\\Hugging Face\\shapenet_data_uncompressed",
-                "--dataset", "${workspaceFolder}/generated_files/Query/",
+                "--mode", "mesh",
+                "--dataset", "${workspaceFolder}/generated_files/Query/test_cubes.obj",
                 "--output-geometry", "${workspaceFolder}/generated_files/mesh_b.txt",
                 "--output-timing", "${workspaceFolder}/preprocessing_query.json"
             ],
@@ -172,7 +172,7 @@
             "preLaunchTask": "CMake: build"
         },
         {
-            "name": "Generate Test Cubes (100, size 2-7, 50^3)",
+            "name": "Generate Test Cubes",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/scripts/generate_test_cubes.py",
@@ -183,7 +183,7 @@
                 "--extent-x", "0", "100",
                 "--extent-y", "0", "100",
                 "--extent-z", "0", "100",
-                "--output-dir", "${workspaceFolder}/generated_files/Query"
+                "--output", "${workspaceFolder}/generated_files/Query/test_cubes.obj"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"

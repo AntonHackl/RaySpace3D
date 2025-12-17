@@ -13,6 +13,6 @@ enum class DatasetType {
 class DatasetLoaderFactory {
 public:
     static std::unique_ptr<IDatasetLoader> create(DatasetType type);
-    // Heuristic: decide based on path (directory -> Mesh, otherwise -> Polygon)
+    // Heuristic: decide based on path (.obj file -> Mesh, otherwise -> Polygon)
     static std::unique_ptr<IDatasetLoader> createFromPath(const std::string& path);
 };

@@ -9,6 +9,6 @@
 class IDatasetLoader {
 public:
     virtual ~IDatasetLoader() = default;
-    // Load geometry from a dataset path (file for polygons, directory for meshes)
+    // Load geometry from a dataset path (WKT file for polygons, .obj file for meshes)
     virtual GeometryData load(const std::string& path) = 0;
 };

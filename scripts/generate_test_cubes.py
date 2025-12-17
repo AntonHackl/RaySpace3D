@@ -87,29 +87,6 @@ def write_obj_file(filepath, cubes_data):
             vertex_offset += len(vertices)
 
 
-def write_separate_obj_files(output_dir, cubes_data):
-    """
-    Write each cube to a separate .obj file.
-    
-    Args:
-        output_dir: Directory to write files to
-        cubes_data: List of (cube_id, vertices, faces) tuples
-    """
-    for cube_id, vertices, faces in cubes_data:
-        filepath = os.path.join(output_dir, f"cube_{cube_id:04d}.obj")
-        with open(filepath, 'w') as f:
-            f.write(f"# Generated cube mesh {cube_id} for RaySpace3D testing\n\n")
-            f.write(f"o cube_{cube_id}\n")
-            
-            # Write vertices
-            for v in vertices:
-                f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
-            
-            # Write faces (1-indexed in .obj format)
-            for face in faces:
-                f.write(f"f {face[0] + 1} {face[1] + 1} {face[2] + 1}\n")
-
-
 def generate_random_cube_data(num_cubes, min_size, max_size, extent_x, extent_y, extent_z, seed=None):
     """
     Generate random cube data within the specified space extent.
@@ -170,12 +147,8 @@ def main():
     parser.add_argument('--extent-z', type=float, nargs=2, default=[0.0, 100.0],
                         metavar=('MIN', 'MAX'),
                         help='Z extent (min max) for cube centers')
-    parser.add_argument('--output-dir', '-o', type=str, default='generated_files/Query',
-                        help='Output directory for generated mesh files')
-    parser.add_argument('--single-file', action='store_true',
-                        help='Write all cubes to a single .obj file instead of separate files')
-    parser.add_argument('--output-name', type=str, default='test_cubes.obj',
-                        help='Output filename when using --single-file')
+    parser.add_argument('--output', '-o', type=str, default='generated_files/Query/test_cubes.obj',
+                        help='Output path for the .obj file containing all cubes')
     parser.add_argument('--seed', type=int, default=None,
                         help='Random seed for reproducibility')
     
@@ -190,8 +163,8 @@ def main():
         parser.error("Minimum size cannot be greater than maximum size")
     
     # Create output directory if it doesn't exist
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     
     print(f"Generating {args.num_cubes} test cubes...")
     print(f"  Size range: [{args.min_size}, {args.max_size}]")
@@ -213,15 +186,9 @@ def main():
     )
     
     # Write output
-    if args.single_file:
-        output_path = output_dir / args.output_name
-        print(f"Writing to single file: {output_path}")
-        write_obj_file(output_path, cubes_data)
-        print(f"Successfully wrote {args.num_cubes} cubes to {output_path}")
-    else:
-        print(f"Writing to directory: {output_dir}")
-        write_separate_obj_files(str(output_dir), cubes_data)
-        print(f"Successfully wrote {args.num_cubes} cube files to {output_dir}")
+    print(f"Writing to file: {output_path}")
+    write_obj_file(output_path, cubes_data)
+    print(f"Successfully wrote {args.num_cubes} cubes to {output_path}")
     
     # Print statistics
     total_vertices = args.num_cubes * 8

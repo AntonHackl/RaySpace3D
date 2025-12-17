@@ -91,8 +91,8 @@ int main(int argc, char* argv[]) {
                 std::cout << "Options:" << std::endl;
                 std::cout << "  --mode <wkt|mesh>          Dataset loading mode (default: wkt)" << std::endl;
                 std::cout << "                             wkt:  Load WKT dataset file and triangulate" << std::endl;
-                std::cout << "                             mesh: Load .obj files from directory recursively" << std::endl;
-                std::cout << "  --dataset <path>           Path to dataset (WKT file for wkt mode, directory for mesh mode)" << std::endl;
+                std::cout << "                             mesh: Load single .obj file with multiple objects (indexed by 'o' statements)" << std::endl;
+                std::cout << "  --dataset <path>           Path to dataset (WKT file for wkt mode, .obj file for mesh mode)" << std::endl;
                 std::cout << "  --output-geometry <path>   Path to text file for geometry data output (default: geometry_data.txt)" << std::endl;
                 std::cout << "  --output-timing <path>     Path to JSON file for preprocessing timing output (default: preprocessing_timing.json)" << std::endl;
                 std::cout << "  --shuffle                  Randomly translate each loaded object by a vector in [-100, 100] on x/y/z" << std::endl;

@@ -8,5 +8,5 @@
 
 class MeshDatasetLoader : public IDatasetLoader {
 public:
-    GeometryData load(const std::string& directoryPath) override;
+    GeometryData load(const std::string& filePath) override;
 };

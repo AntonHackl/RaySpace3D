@@ -18,7 +18,7 @@ std::unique_ptr<IDatasetLoader> DatasetLoaderFactory::create(DatasetType type) {
 
 std::unique_ptr<IDatasetLoader> DatasetLoaderFactory::createFromPath(const std::string& path) {
     std::error_code ec;
-    if (std::filesystem::is_directory(path, ec)) {
+    if (std::filesystem::is_regular_file(path, ec) && std::filesystem::path(path).extension() == ".obj") {
         return std::make_unique<MeshDatasetLoader>();
     }
     return std::make_unique<PolygonDatasetLoader>();
