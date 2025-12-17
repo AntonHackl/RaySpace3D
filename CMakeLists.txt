@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.18)
 
+# Force system compiler on Linux to avoid conda gcc/glibc conflicts
+# Must be set BEFORE project() command
+if(UNIX AND NOT APPLE AND NOT WIN32)
+    if(DEFINED ENV{CONDA_PREFIX} AND NOT DEFINED CMAKE_CXX_COMPILER)
+        find_program(SYSTEM_CXX_COMPILER NAMES g++ PATHS /usr/bin /usr/local/bin NO_DEFAULT_PATH)
+        if(SYSTEM_CXX_COMPILER)
+            set(CMAKE_CXX_COMPILER "${SYSTEM_CXX_COMPILER}" CACHE FILEPATH "C++ compiler" FORCE)
+            message(STATUS "Forcing system C++ compiler: ${SYSTEM_CXX_COMPILER}")
+        endif()
+    endif()
+endif()
+
 project(OptiXSingleRay LANGUAGES CXX CUDA)
 
 # Policy to correctly handle MSVC Runtime Library flags (Static vs Dynamic)
@@ -22,6 +34,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(NOT WIN32)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -fPIE")
     link_directories(/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu)
+    
+    # Ensure system linker finds standard libraries correctly
+    # Add --sysroot to avoid conda gcc sysroot issues
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L/lib/x86_64-linux-gnu -L/usr/lib/x86_64-linux-gnu")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -L/lib/x86_64-linux-gnu -L/usr/lib/x86_64-linux-gnu")
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -38,6 +55,8 @@ endif()
 if(DEFINED ENV{CONDA_PREFIX})
     set(CONDA_PREFIX $ENV{CONDA_PREFIX})
     message(STATUS "Conda environment detected: ${CONDA_PREFIX}")
+    
+    # Add conda paths to search paths with highest priority
     list(PREPEND CMAKE_PREFIX_PATH "${CONDA_PREFIX}")
     
     if(WIN32)
@@ -48,6 +67,10 @@ if(DEFINED ENV{CONDA_PREFIX})
         set(CONDA_CUDA_BIN "${CONDA_PREFIX}/bin")
         set(CONDA_CUDA_INCLUDE "${CONDA_PREFIX}/include")
         set(CONDA_CUDA_LIB "${CONDA_PREFIX}/lib")
+        
+        # Ensure conda library paths are included and boost can be found
+        include_directories(SYSTEM "${CONDA_PREFIX}/include")
+        link_directories("${CONDA_PREFIX}/lib")
     endif()
     
     # Configure CUDA compiler from Conda if available

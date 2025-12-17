@@ -51,8 +51,9 @@ void RayLauncher::launch(OptixAccelerationStructure& as, int numRays) {
     
     CUDA_CHECK(cudaMemcpy((void*)pipeline_.getLaunchParamsBuffer(), &lp, sizeof(LaunchParams), cudaMemcpyHostToDevice));
     
+    OptixShaderBindingTable sbt = pipeline_.getSBT();
     OPTIX_CHECK(optixLaunch(pipeline_.getPipeline(), 0, pipeline_.getLaunchParamsBuffer(), 
-                            sizeof(LaunchParams), &pipeline_.getSBT(), numRays, 1, 1));
+                            sizeof(LaunchParams), &sbt, numRays, 1, 1));
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
