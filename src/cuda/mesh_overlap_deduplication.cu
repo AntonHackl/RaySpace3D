@@ -43,7 +43,6 @@ int merge_and_deduplicate_gpu(
         return 0;
     }
     
-    // Allocate temporary buffer for 64-bit keys
     unsigned long long* d_keys;
     cudaMalloc(&d_keys, total_results * sizeof(unsigned long long));
     
@@ -62,7 +61,6 @@ int merge_and_deduplicate_gpu(
                    cudaMemcpyDeviceToDevice);
     }
     
-    // Convert pairs to keys
     pairs_to_keys_kernel<<<blocks, threads>>>(d_merged_output, d_keys, total_results);
     cudaDeviceSynchronize();
     
@@ -82,7 +80,6 @@ int merge_and_deduplicate_gpu(
     keys_to_pairs_kernel<<<unique_blocks, threads>>>(d_keys, d_merged_output, num_unique);
     cudaDeviceSynchronize();
     
-    // Cleanup
     cudaFree(d_keys);
     
     return num_unique;

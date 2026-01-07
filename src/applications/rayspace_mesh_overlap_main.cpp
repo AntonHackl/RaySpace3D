@@ -46,7 +46,6 @@ QueryResults executeTwoPassQuery(
     int mesh2NumTriangles,
     bool verbose = true
 ) {
-    // Reset counts
     CUDA_CHECK(cudaMemset(d_counts1, 0, mesh1NumTriangles * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_counts2, 0, mesh2NumTriangles * sizeof(int)));
     
@@ -56,7 +55,6 @@ QueryResults executeTwoPassQuery(
     overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
     
-    // Perform exclusive scan to get offsets
     int numHits1 = exclusive_scan_gpu(d_counts1, d_offsets1, mesh1NumTriangles);
     int numHits2 = exclusive_scan_gpu(d_counts2, d_offsets2, mesh2NumTriangles);
     
@@ -65,7 +63,6 @@ QueryResults executeTwoPassQuery(
         std::cout << "Kernel 2 will produce " << numHits2 << " collisions" << std::endl;
     }
     
-    // Allocate exact space needed for results
     MeshOverlapResult* d_results1 = nullptr;
     MeshOverlapResult* d_results2 = nullptr;
     if (numHits1 > 0) {
@@ -75,13 +72,12 @@ QueryResults executeTwoPassQuery(
         CUDA_CHECK(cudaMalloc(&d_results2, numHits2 * sizeof(MeshOverlapResult)));
     }
     
-    // Update params for pass 2
+    // PASS 2: Write collisions to pre-allocated positions
     params1.results = d_results1;
     params1.pass = 2;
     params2.results = d_results2;
     params2.pass = 2;
     
-    // PASS 2: Write collisions to pre-allocated positions
     overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
     
@@ -100,7 +96,6 @@ int main(int argc, char* argv[]) {
     bool exportResults = true;
     int warmupRuns = 2;
     
-    // Parse command line arguments
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -155,12 +150,10 @@ int main(int argc, char* argv[]) {
     
     timer.next("Application Creation");
     
-    // Initialize OptiX
     OptixContext context;
     OptixPipelineManager basePipeline(context, ptxPath);
     MeshOverlapLauncher overlapLauncher(context, basePipeline);
     
-    // Load Mesh1
     timer.next("Load Mesh1");
     std::cout << "Loading Mesh1 from: " << mesh1Path << std::endl;
     GeometryData mesh1Data = loadGeometryFromFile(mesh1Path);
@@ -171,7 +164,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh1 loaded: " << mesh1Data.pinnedBuffers.vertices_size << " vertices, " 
               << mesh1Data.pinnedBuffers.indices_size << " triangles" << std::endl;
     
-    // Load Mesh2
     timer.next("Load Mesh2");
     std::cout << "Loading Mesh2 from: " << mesh2Path << std::endl;
     GeometryData mesh2Data = loadGeometryFromFile(mesh2Path);
@@ -183,37 +175,31 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh2 loaded: " << mesh2Data.pinnedBuffers.vertices_size << " vertices, " 
               << mesh2Data.pinnedBuffers.indices_size << " triangles" << std::endl;
     
-    // Upload Mesh1 to GPU
     timer.next("Upload Mesh1");
     GeometryUploader mesh1Uploader;
     mesh1Uploader.upload(mesh1Data);
     std::cout << "Mesh1 uploaded to GPU" << std::endl;
     
-    // Upload Mesh2 to GPU
     timer.next("Upload Mesh2");
     GeometryUploader mesh2Uploader;
     mesh2Uploader.upload(mesh2Data);
     std::cout << "Mesh2 uploaded to GPU" << std::endl;
     
-    // Build acceleration structure for Mesh1
     timer.next("Build Mesh1 Index");
     OptixAccelerationStructure mesh1AS(context, mesh1Uploader);
     mesh1AS.build();
     std::cout << "Mesh1 acceleration structure built" << std::endl;
     
-    // Build acceleration structure for Mesh2
     timer.next("Build Mesh2 Index");
     OptixAccelerationStructure mesh2AS(context, mesh2Uploader);
     mesh2AS.build();
     std::cout << "Mesh2 acceleration structure built" << std::endl;
     
-    // Prepare launch parameters for kernel 1 (Mesh1 triangles vs Mesh2 AS)
     timer.next("Prepare Kernel Parameters");
     
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
     
-    // Allocate counting and offset buffers for two-pass approach
     int* d_counts1 = nullptr;
     int* d_offsets1 = nullptr;
     int* d_counts2 = nullptr;
@@ -252,7 +238,6 @@ int main(int argc, char* argv[]) {
     params2.results = nullptr; // Will be allocated after pass 1
     params2.pass = 1; // Start with counting pass
     
-    // Warmup runs - execute full two-pass query to warm up all kernels (OptiX + Thrust)
     timer.next("Warmup");
     if (warmupRuns > 0) {
         std::cout << "Running " << warmupRuns << " warmup iterations (full two-pass query)..." << std::endl;
@@ -271,13 +256,12 @@ int main(int argc, char* argv[]) {
     
     timer.next("Query");
     
-    // Execute the actual timed query
     std::cout << "\n=== Executing mesh overlap detection ===" << std::endl;
     QueryResults queryResults = executeTwoPassQuery(
         overlapLauncher, params1, params2,
         d_counts1, d_offsets1, d_counts2, d_offsets2,
         mesh1NumTriangles, mesh2NumTriangles,
-        true // Verbose output
+        true
     );
     
     MeshOverlapResult* d_results1 = queryResults.d_results1;
@@ -290,12 +274,10 @@ int main(int argc, char* argv[]) {
     std::cout << "\nDeduplication: Processing " << numHits1 << " + " << numHits2 
               << " = " << (numHits1 + numHits2) << " total overlaps" << std::endl;
     
-    // Allocate merged buffer on GPU for deduplication
     MeshOverlapResult* d_merged_results = nullptr;
     int totalHits = numHits1 + numHits2;
     CUDA_CHECK(cudaMalloc(&d_merged_results, totalHits * sizeof(MeshOverlapResult)));
     
-    // Merge and deduplicate on GPU using Thrust
     int numUnique = merge_and_deduplicate_gpu(
         d_results1, numHits1,
         d_results2, numHits2,
@@ -306,7 +288,6 @@ int main(int argc, char* argv[]) {
     
     timer.next("Download Results");
     
-    // Download only the unique results
     std::vector<MeshOverlapResult> uniqueResults(numUnique);
     if (numUnique > 0) {
         CUDA_CHECK(cudaMemcpy(uniqueResults.data(), d_merged_results, 
@@ -336,7 +317,6 @@ int main(int argc, char* argv[]) {
     
     timer.next("Cleanup");
     
-    // Cleanup
     if (d_results1) CUDA_CHECK(cudaFree(d_results1));
     if (d_results2) CUDA_CHECK(cudaFree(d_results2));
     CUDA_CHECK(cudaFree(d_merged_results));
