@@ -148,7 +148,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Loading new geometry..." << std::endl;
             
             cachedGeometry = loadGeometryFromFile(currentGeomPath);
-            if (!cachedGeometry.pinnedBuffers.allocated || cachedGeometry.pinnedBuffers.vertices_size == 0) {
+            if (cachedGeometry.vertices.empty()) {
                 std::cerr << "Error: Failed to load geometry from " << currentGeomPath << std::endl;
                 continue;
             }
@@ -175,7 +175,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Loading new points..." << std::endl;
             
             cachedPointData = loadPointDataset(currentPointsPath);
-            if (cachedPointData.numPoints == 0 || !cachedPointData.pinnedBuffers.allocated) {
+            if (cachedPointData.numPoints == 0) {
                 std::cerr << "Error: Failed to load points from " << currentPointsPath << std::endl;
                 continue;
             }
@@ -186,7 +186,7 @@ int main(int argc, char* argv[]) {
             timer.next("Upload Points");
             if (launcher) delete launcher;
             launcher = new RayLauncher(pipeline, geometryUploader);
-            launcher->uploadRays(cachedPointData.pinnedBuffers.positions_pinned, cachedPointData.numPoints);
+            launcher->uploadRays(cachedPointData.positions.data(), cachedPointData.numPoints);
             std::cout << "Points uploaded to GPU" << std::endl;
         } else {
             std::cout << "Using cached points" << std::endl;
@@ -245,13 +245,17 @@ int main(int argc, char* argv[]) {
             }
             csvFile.close();
         }
-        
-        // Free pinned memory buffers after task completion
-        cachedGeometry.pinnedBuffers.free();
-        cachedPointData.pinnedBuffers.free();
     }
     
     timer.next("Cleanup");
+    
+    // Free host memory to save RAM (GPU memory persists)
+    // Moved here to avoid timing variance from cudaFreeHost() during pinned memory deallocation
+    cachedGeometry.vertices.clear(); cachedGeometry.vertices.shrink_to_fit();
+    cachedGeometry.indices.clear(); cachedGeometry.indices.shrink_to_fit();
+    cachedGeometry.triangleToObject.clear(); cachedGeometry.triangleToObject.shrink_to_fit();
+    
+    cachedPointData.positions.clear(); cachedPointData.positions.shrink_to_fit();
     
     // Cleanup
     if (launcher) delete launcher;

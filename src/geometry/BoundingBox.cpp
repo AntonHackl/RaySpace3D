@@ -3,8 +3,8 @@
 
 BoundingBox BoundingBox::computeFromGeometry(const GeometryData& geometry) {
     BoundingBox bbox;
-    for (size_t i = 0; i < geometry.pinnedBuffers.vertices_size; i++) {
-        bbox.expand(geometry.pinnedBuffers.vertices_pinned[i]);
+    for (const auto& v : geometry.vertices) {
+        bbox.expand(v);
     }
     return bbox;
 }

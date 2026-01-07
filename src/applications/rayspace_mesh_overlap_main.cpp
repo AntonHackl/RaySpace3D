@@ -157,23 +157,22 @@ int main(int argc, char* argv[]) {
     timer.next("Load Mesh1");
     std::cout << "Loading Mesh1 from: " << mesh1Path << std::endl;
     GeometryData mesh1Data = loadGeometryFromFile(mesh1Path);
-    if (!mesh1Data.pinnedBuffers.allocated || mesh1Data.pinnedBuffers.vertices_size == 0) {
+    if (mesh1Data.vertices.empty()) {
         std::cerr << "Error: Failed to load Mesh1 from " << mesh1Path << std::endl;
         return 1;
     }
-    std::cout << "Mesh1 loaded: " << mesh1Data.pinnedBuffers.vertices_size << " vertices, " 
-              << mesh1Data.pinnedBuffers.indices_size << " triangles" << std::endl;
+    std::cout << "Mesh1 loaded: " << mesh1Data.vertices.size() << " vertices, " 
+              << mesh1Data.indices.size() << " triangles" << std::endl;
     
     timer.next("Load Mesh2");
     std::cout << "Loading Mesh2 from: " << mesh2Path << std::endl;
     GeometryData mesh2Data = loadGeometryFromFile(mesh2Path);
-    if (!mesh2Data.pinnedBuffers.allocated || mesh2Data.pinnedBuffers.vertices_size == 0) {
+    if (mesh2Data.vertices.empty()) {
         std::cerr << "Error: Failed to load Mesh2 from " << mesh2Path << std::endl;
-        mesh1Data.pinnedBuffers.free();
         return 1;
     }
-    std::cout << "Mesh2 loaded: " << mesh2Data.pinnedBuffers.vertices_size << " vertices, " 
-              << mesh2Data.pinnedBuffers.indices_size << " triangles" << std::endl;
+    std::cout << "Mesh2 loaded: " << mesh2Data.vertices.size() << " vertices, " 
+              << mesh2Data.indices.size() << " triangles" << std::endl;
     
     timer.next("Upload Mesh1");
     GeometryUploader mesh1Uploader;
@@ -325,8 +324,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_counts2));
     CUDA_CHECK(cudaFree(d_offsets2));
     
-    mesh1Data.pinnedBuffers.free();
-    mesh2Data.pinnedBuffers.free();
+    // Pinned vectors freed automatically
     
     timer.finish(outputJsonPath);
     

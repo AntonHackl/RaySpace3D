@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <cstdlib>
+#include <new>
 
 // CUDA error checking macro with fail-fast behavior
 #define CUDA_CHECK_PINNED(call) \
@@ -15,6 +16,34 @@
             std::exit(EXIT_FAILURE); \
         } \
     } while(0)
+
+template<typename T>
+class PinnedAllocator {
+public:
+    using value_type = T;
+
+    PinnedAllocator() noexcept {}
+    template<typename U> PinnedAllocator(const PinnedAllocator<U>&) noexcept {}
+
+    T* allocate(std::size_t n) {
+        T* ptr;
+        cudaError_t err = cudaMallocHost((void**)&ptr, n * sizeof(T));
+        if (err != cudaSuccess) {
+            throw std::bad_alloc();
+        }
+        return ptr;
+    }
+
+    void deallocate(T* ptr, std::size_t) {
+        cudaFreeHost(ptr);
+    }
+};
+
+template<typename T, typename U>
+bool operator==(const PinnedAllocator<T>&, const PinnedAllocator<U>&) { return true; }
+
+template<typename T, typename U>
+bool operator!=(const PinnedAllocator<T>&, const PinnedAllocator<U>&) { return false; }
 
 /**
  * RAII wrapper for pinned memory buffers used in geometry data transfers.

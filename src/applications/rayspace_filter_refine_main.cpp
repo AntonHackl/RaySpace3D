@@ -88,12 +88,12 @@ int main(int argc, char* argv[]) {
     // Load geometry
     std::cout << "Loading geometry from: " << geometryFilePath << std::endl;
     GeometryData geometry = loadGeometryFromFile(geometryFilePath);
-    if (geometry.pinnedBuffers.vertices_size == 0) {
+    if (geometry.vertices.empty()) {
         std::cerr << "Error: Failed to load geometry from " << geometryFilePath << std::endl;
         return 1;
     }
-    std::cout << "Geometry loaded: " << geometry.pinnedBuffers.vertices_size << " vertices, " 
-              << geometry.pinnedBuffers.indices_size << " triangles" << std::endl;
+    std::cout << "Geometry loaded: " << geometry.vertices.size() << " vertices, " 
+              << geometry.indices.size() << " triangles" << std::endl;
     
     // Load points
     std::cout << "Loading points from: " << pointDatasetPath << std::endl;
@@ -151,9 +151,7 @@ int main(int argc, char* argv[]) {
     
     timer.next("Cleanup");
     
-    // Free pinned memory
-    geometry.pinnedBuffers.free();
-    pointData.pinnedBuffers.free();
+    // Pinned vectors free themselves
     
     timer.finish(outputJsonPath);
     

@@ -12,9 +12,9 @@ GeometryUploader::~GeometryUploader() {
 void GeometryUploader::upload(const GeometryData& geometry) {
     freeInternal();
     
-    num_vertices_ = geometry.pinnedBuffers.vertices_size;
-    num_indices_ = geometry.pinnedBuffers.indices_size;
-    num_triangle_to_object_ = geometry.pinnedBuffers.triangleToObject_size;
+    num_vertices_ = geometry.vertices.size();
+    num_indices_ = geometry.indices.size();
+    num_triangle_to_object_ = geometry.triangleToObject.size();
     
     if (num_vertices_ == 0 || num_indices_ == 0) {
         return;
@@ -27,10 +27,10 @@ void GeometryUploader::upload(const GeometryData& geometry) {
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices_), ibytes));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object_), num_triangle_to_object_ * sizeof(int)));
     
-    // Use pinned memory buffers for faster DMA transfer
-    CUDA_CHECK(cudaMemcpy(d_vertices_, geometry.pinnedBuffers.vertices_pinned, vbytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_indices_, geometry.pinnedBuffers.indices_pinned, ibytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_triangle_to_object_, geometry.pinnedBuffers.triangleToObject_pinned, 
+    // Use pinned memory vectors for faster DMA transfer
+    CUDA_CHECK(cudaMemcpy(d_vertices_, geometry.vertices.data(), vbytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_indices_, geometry.indices.data(), ibytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_triangle_to_object_, geometry.triangleToObject.data(), 
                           num_triangle_to_object_ * sizeof(int), cudaMemcpyHostToDevice));
 }
 

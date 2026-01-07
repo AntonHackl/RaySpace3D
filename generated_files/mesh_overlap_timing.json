@@ -1,68 +1,68 @@
 {
   "phases": {
     "data reading_1": {
-      "duration_us": 610,
-      "duration_ms": 0.61
+      "duration_us": 355,
+      "duration_ms": 0.35
     },
     "application creation_1": {
-      "duration_us": 278893,
-      "duration_ms": 278.89
+      "duration_us": 346314,
+      "duration_ms": 346.31
     },
     "load mesh1_1": {
-      "duration_us": 18869855,
-      "duration_ms": 18869.85
+      "duration_us": 18926158,
+      "duration_ms": 18926.16
     },
     "load mesh2_1": {
-      "duration_us": 18757973,
-      "duration_ms": 18757.97
+      "duration_us": 18813326,
+      "duration_ms": 18813.33
     },
     "upload mesh1_1": {
-      "duration_us": 21711,
-      "duration_ms": 21.71
+      "duration_us": 22522,
+      "duration_ms": 22.52
     },
     "upload mesh2_1": {
-      "duration_us": 27474,
-      "duration_ms": 27.47
+      "duration_us": 24361,
+      "duration_ms": 24.36
     },
     "build mesh1 index_1": {
-      "duration_us": 54565,
-      "duration_ms": 54.56
+      "duration_us": 82285,
+      "duration_ms": 82.28
     },
     "build mesh2 index_1": {
-      "duration_us": 44729,
-      "duration_ms": 44.73
+      "duration_us": 82204,
+      "duration_ms": 82.20
     },
     "prepare kernel parameters_1": {
-      "duration_us": 532,
-      "duration_ms": 0.53
+      "duration_us": 424,
+      "duration_ms": 0.42
     },
     "warmup_1": {
-      "duration_us": 127981,
-      "duration_ms": 127.98
+      "duration_us": 95048,
+      "duration_ms": 95.05
     },
     "query_1": {
-      "duration_us": 32407,
-      "duration_ms": 32.41
+      "duration_us": 34140,
+      "duration_ms": 34.14
     },
     "gpu deduplication_1": {
-      "duration_us": 17111,
-      "duration_ms": 17.11
+      "duration_us": 18116,
+      "duration_ms": 18.12
     },
     "download results_1": {
-      "duration_us": 27811,
-      "duration_ms": 27.81
+      "duration_us": 38420,
+      "duration_ms": 38.42
     },
     "output_1": {
-      "duration_us": 12382390,
-      "duration_ms": 12382.39
+      "duration_us": 12139643,
+      "duration_ms": 12139.64
     },
     "cleanup_1": {
-      "duration_us": 5329,
-      "duration_ms": 5.33
+      "duration_us": 2238,
+      "duration_ms": 2.24
     }
   },
   "total": {
-    "duration_us": 50649422,
-    "duration_ms": 50649.42
+    "duration_us": 50625598,
+    "duration_ms": 50625.60
   }
 }

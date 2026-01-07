@@ -16,20 +16,16 @@
 
 struct GeometryData {
     // CPU-side data (std::vectors for flexibility)
-    std::vector<float3> vertices;
-    std::vector<uint3> indices;
-    std::vector<int> triangleToObject;
+    // Use PinnedAllocator to allow direct DMA transfer from these vectors
+    std::vector<float3, PinnedAllocator<float3>> vertices;
+    std::vector<uint3, PinnedAllocator<uint3>> indices;
+    std::vector<int, PinnedAllocator<int>> triangleToObject;
     size_t totalTriangles = 0;
-    
-    // Pinned memory buffers for fast GPU transfer
-    PinnedGeometryBuffers pinnedBuffers;
 };
 
 struct PointData {
     // CPU-side data (std::vector for flexibility)
-    std::vector<float3> positions;
+    // Use PinnedAllocator to allow direct DMA transfer from these vectors
+    std::vector<float3, PinnedAllocator<float3>> positions;
     size_t numPoints = 0;
-    
-    // Pinned memory buffer for fast GPU transfer
-    PinnedPointBuffers pinnedBuffers;
 };

@@ -25,10 +25,9 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
         return pointData; 
     }
 
-    // Use a local vector for fast dynamic growth, then copy to pinned memory once.
-    // This avoids two passes over the file.
-    std::vector<float3> positions;
-    positions.reserve(1000000); // Reserve a reasonable amount to minimize reallocations
+    // Direct loading into pinned memory vector
+    // This avoids double allocation and copying
+    pointData.positions.reserve(1000000); 
 
     char line[1024]; // Buffer for line reading
     while (fgets(line, sizeof(line), file)) {
@@ -48,7 +47,7 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
                 float x = strtof(start, &endPtr);
                 float y = strtof(endPtr, &endPtr);
                 float z = strtof(endPtr, &endPtr);
-                positions.push_back({x, y, z});
+                pointData.positions.push_back({x, y, z});
             }
         } 
         // Fallback for simple list format (e.g. "1.0 2.0 3.0")
@@ -58,21 +57,27 @@ PointData loadPointDataset(const std::string& pointDatasetPath) {
             float y = strtof(endPtr, &endPtr);
             float z = strtof(endPtr, &endPtr);
             if (ptr != endPtr) {
-                positions.push_back({x, y, z});
+                pointData.positions.push_back({x, y, z});
             }
         }
     }
     fclose(file);
     
-    pointData.numPoints = positions.size();
+    pointData.numPoints = pointData.positions.size();
     std::cout << "Found " << pointData.numPoints << " points." << std::endl;
 
-    // Allocate pinned memory and copy
-    // This is much faster than parsing directly into pinned memory with a slow parser
-    pointData.pinnedBuffers.allocate(pointData.numPoints);
-    pointData.pinnedBuffers.copyFrom(positions);
-
-    std::cout << "Loaded " << pointData.numPoints << " points directly into pinned memory" << std::endl;
+    // PinnedBuffers are no longer needed as the vector itself is pinned
+    // pointData.pinnedBuffers.allocate(pointData.numPoints);
+    // pointData.pinnedBuffers.copyFrom(positions);
+    
+    // For compatibility with code that checks pinnedBuffers (if any), 
+    // we could manually set the pointers, but PinnedPointBuffers destructor would try to free them.
+    // So we leave them null. Consumers must be updated to use pointData.positions directly.
+    
+    // Hack for legacy code: If we absolutely must, we could release the memory from the vector 
+    // and give it to pinnedBuffers, but Vector doesn't support release().
+    
+    std::cout << "Loaded " << pointData.numPoints << " points directly into pinned memory (std::vector)" << std::endl;
     std::cout << "Ready for GPU transfer (zero-copy)" << std::endl;
     std::cout << "=============================\n" << std::endl;
     return pointData;

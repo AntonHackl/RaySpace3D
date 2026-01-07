@@ -22,7 +22,7 @@ FilterRefineResult FilterRefinePipeline::executeFilter(const GeometryData& filte
     
     // Upload points
     RayLauncher launcher(pipeline_, filterUploader);
-    launcher.uploadRays(pointData.pinnedBuffers.positions_pinned, pointData.numPoints);
+    launcher.uploadRays(pointData.positions.data(), pointData.numPoints);
     
     // Launch filter rays
     launcher.launch(filterAS, static_cast<int>(pointData.numPoints));
@@ -98,26 +98,17 @@ FilterRefineResult FilterRefinePipeline::execute(const GeometryData& queryGeomet
     
     // Create filter geometry from bounding box
     GeometryData filterGeometry;
-    filterGeometry.vertices = boxMesh.vertices;
-    filterGeometry.indices = boxMesh.indices;
-    filterGeometry.triangleToObject = boxMesh.triangleToObject;
+    filterGeometry.vertices.assign(boxMesh.vertices.begin(), boxMesh.vertices.end());
+    filterGeometry.indices.assign(boxMesh.indices.begin(), boxMesh.indices.end());
+    filterGeometry.triangleToObject.assign(boxMesh.triangleToObject.begin(), boxMesh.triangleToObject.end());
     filterGeometry.totalTriangles = boxMesh.indices.size();
     
-    // Allocate pinned buffers for filter geometry
-    filterGeometry.pinnedBuffers.allocate(
-        boxMesh.vertices.size(),
-        boxMesh.indices.size(),
-        boxMesh.triangleToObject.size()
-    );
-    
-    // Copy data to pinned buffers using the helper method
-    filterGeometry.pinnedBuffers.copyFrom(boxMesh.vertices, boxMesh.indices, boxMesh.triangleToObject);
+    // No need to explicitly allocate/copy pinnedBuffers, as the vectors above use PinnedAllocator
     
     // Execute filter phase
     FilterRefineResult filterResult = executeFilter(filterGeometry, pointData);
     
-    // Cleanup filter geometry pinned buffers
-    filterGeometry.pinnedBuffers.free();
+    // Cleanup filter geometry (vectors clear themselves)
     
     if (filterResult.candidateCount == 0) {
         // No candidates, all points filtered out
@@ -132,7 +123,7 @@ FilterRefineResult FilterRefinePipeline::execute(const GeometryData& queryGeomet
     candidatePoints.reserve(filterResult.candidateCount);
     for (int idx : filterResult.candidateIndices) {
         if (idx >= 0 && static_cast<size_t>(idx) < pointData.numPoints) {
-            candidatePoints.push_back(pointData.pinnedBuffers.positions_pinned[idx]);
+            candidatePoints.push_back(pointData.positions[idx]);
         }
     }
     
