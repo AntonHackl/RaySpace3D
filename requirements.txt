@@ -1,3 +1,0 @@
-numpy>=1.20.0
-matplotlib>=3.3.0
-plotly>=5.0.0  # Optional, for interactive 3D visualizations
