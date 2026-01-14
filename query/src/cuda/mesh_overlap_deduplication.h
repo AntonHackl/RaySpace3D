@@ -10,4 +10,9 @@ int merge_and_deduplicate_gpu(
     MeshOverlapResult* d_merged_output  // Should be allocated with size >= (num_results1 + num_results2)
 );
 
+int compact_hash_table(
+    const unsigned long long* d_hash_table, int table_size,
+    MeshOverlapResult* d_output, int max_output_size
+);
+
 } // extern "C"

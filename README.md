@@ -81,3 +81,13 @@ make -j8
 
 1. **Preprocess** your datasets once using the preprocessing tool
 2. **Query** the preprocessed data using the query tools as many times as needed
+
+
+## Preprocessing file format
+The preprocessing tool converts datasets (.obj, .dt) into a text format used for the query engine. The format is defined as follows:
+
+```
+vertices: ... (each vertex are three float values, the position of the vertex)
+faces: ... (each face is three int values, a triangle)
+triangleToObject: ... (each triangle is one int value, the index of the object it belongs to)
+triangle_count: ... (one integer, the total number of triangles)

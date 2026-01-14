@@ -28,6 +28,29 @@ __global__ void keys_to_pairs_kernel(const unsigned long long* keys, MeshOverlap
     if (idx < n) {
         key_to_pair(keys[idx], pairs[idx].object_id_mesh1, pairs[idx].object_id_mesh2);
     }
+
+}
+
+__global__ void compact_hash_pairs_kernel(
+    const unsigned long long* hash_table, 
+    int capacity, 
+    MeshOverlapResult* output, 
+    int* count_out, 
+    int max_output_size) 
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < capacity) {
+        unsigned long long key = hash_table[idx];
+        if (key != 0xFFFFFFFFFFFFFFFFULL) {
+            int pos = atomicAdd(count_out, 1);
+            if (pos < max_output_size) {
+                 int id1 = static_cast<int>(key >> 32);
+                 int id2 = static_cast<int>(key & 0xFFFFFFFF);
+                 output[pos].object_id_mesh1 = id1;
+                 output[pos].object_id_mesh2 = id2;
+            }
+        }
+    }
 }
 
 extern "C" {
@@ -83,6 +106,29 @@ int merge_and_deduplicate_gpu(
     cudaFree(d_keys);
     
     return num_unique;
+}
+
+int compact_hash_table(
+    const unsigned long long* d_hash_table, int table_size,
+    MeshOverlapResult* d_output, int max_output_size
+) {
+    int* d_count;
+    cudaMalloc(&d_count, sizeof(int));
+    cudaMemset(d_count, 0, sizeof(int));
+    
+    int threads = 256;
+    int blocks = (table_size + threads - 1) / threads;
+    
+    compact_hash_pairs_kernel<<<blocks, threads>>>(
+        d_hash_table, table_size, d_output, d_count, max_output_size
+    );
+    cudaDeviceSynchronize();
+    
+    int h_count = 0;
+    cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaFree(d_count);
+    
+    return (h_count < max_output_size) ? h_count : max_output_size;
 }
 
 } // extern "C"
