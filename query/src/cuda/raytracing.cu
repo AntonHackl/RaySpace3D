@@ -44,36 +44,35 @@ extern "C" __global__ void __raygen__rg()
             /*missSBTIndex*/ 0,
             /*payload*/ hitFlag, distance, triangleIndex);
 
-        if (!hitFlag) {
-            break;
-        }
-
         float t = __uint_as_float(distance);
-        if (t < epsilon || t >= max_distance) {
-            break;
-        }
+        int validHit = hitFlag && (t >= epsilon) && (t < max_distance);
+        
+        // Store first triangle hit (branchless using mask)
+        firstTriangleIndex = (intersection_count == 0) ? triangleIndex : firstTriangleIndex;
+        
+        intersection_count += validHit;
+        t_min = validHit ? t : t_min;
 
-        if (intersection_count == 0) {
-            firstTriangleIndex = triangleIndex;
-        }
-
-        intersection_count++;
-        t_min = t;
-
-        if (t_min >= max_distance) {
+        if (!validHit) {
             break;
         }
     }
 
-    bool isInside = (intersection_count % 2 == 1);
+    bool isInside = (intersection_count & 1);
     
-    params.result[ray_id].ray_id = ray_id;
-    params.result[ray_id].polygon_index = isInside ? static_cast<int>(params.triangle_to_object[firstTriangleIndex]) : -1;
-    
-    if (isInside && params.compact_result != nullptr && params.hit_counter != nullptr) {
-        int compact_idx = atomicAdd(params.hit_counter, 1);
-        params.compact_result[compact_idx].ray_id = ray_id;
-        params.compact_result[compact_idx].polygon_index = static_cast<int>(params.triangle_to_object[firstTriangleIndex]);
+    if (isInside) {
+        int polygonIndex = static_cast<int>(params.triangle_to_object[firstTriangleIndex]);
+        params.result[ray_id].ray_id = ray_id;
+        params.result[ray_id].polygon_index = polygonIndex;
+        
+        if (params.compact_result != nullptr && params.hit_counter != nullptr) {
+            int compact_idx = atomicAdd(params.hit_counter, 1);
+            params.compact_result[compact_idx].ray_id = ray_id;
+            params.compact_result[compact_idx].polygon_index = polygonIndex;
+        }
+    } else {
+        params.result[ray_id].ray_id = ray_id;
+        params.result[ray_id].polygon_index = -1;
     }
 }
 
