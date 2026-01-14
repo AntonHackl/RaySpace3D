@@ -3,7 +3,8 @@
 #include <string>
 #include <memory>
 
-#include "Geometry.h" // For GeometryData
+// #include "Geometry.h" // For GeometryData
+#include "../../common/include/Geometry.h"
 
 // Interface for interchangeable dataset loaders
 class IDatasetLoader {

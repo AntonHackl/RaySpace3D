@@ -9,7 +9,7 @@
 #define MYGPU_H_
 
 #include <vector>
-using namespace std;
+#include <mutex>
 
 namespace tdbase{
 
@@ -18,14 +18,14 @@ public:
 	int device_id;
 	size_t mem_size;
 	bool busy;
-	pthread_mutex_t lock;
+	std::mutex lock;
 	char *d_data = NULL;
 };
 void initialize();
 void init_gpu(gpu_info *gpu);
 void clean_gpu(gpu_info *gpu);
 
-vector<gpu_info *> get_gpus();
+std::vector<gpu_info *> get_gpus();
 void print_gpus();
 
 }

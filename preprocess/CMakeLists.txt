@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
 project(RaySpace3DPreprocess LANGUAGES CXX)
 
+add_compile_definitions(NOMINMAX)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -8,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(CGAL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
+find_package(CUDAToolkit REQUIRED)
 
 # TinyObjLoader
 find_package(tinyobjloader CONFIG QUIET)
@@ -18,9 +21,25 @@ endif()
 # Add common library
 add_subdirectory(../common ${CMAKE_CURRENT_BINARY_DIR}/common)
 
+# Global compiler definitions
+add_compile_definitions(NOMINMAX)
+
+# Find Eigen3
+find_package(Eigen3 CONFIG REQUIRED)
+
 # Include Eigen3 path
-if(DEFINED ENV{CONDA_PREFIX})
-    include_directories(SYSTEM "$ENV{CONDA_PREFIX}/include/eigen3")
+if(TARGET Eigen3::Eigen)
+    link_libraries(Eigen3::Eigen)
+elseif(DEFINED ENV{CONDA_PREFIX})
+    # Conda installs headers/libs under different directories on Windows vs Linux
+    if(WIN32)
+        set(CONDA_INCLUDE_DIR "$ENV{CONDA_PREFIX}/Library/include")
+        set(CONDA_LIB_DIR "$ENV{CONDA_PREFIX}/Library/lib")
+    else()
+        set(CONDA_INCLUDE_DIR "$ENV{CONDA_PREFIX}/include")
+        set(CONDA_LIB_DIR "$ENV{CONDA_PREFIX}/lib")
+    endif()
+    include_directories(SYSTEM "${CONDA_INCLUDE_DIR}/eigen3")
 endif()
 
 # TDBase library sources
@@ -56,12 +75,14 @@ target_include_directories(preprocess_dataset PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${TDBASE_LIB_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
-    $ENV{CONDA_PREFIX}/include
-    $ENV{CONDA_PREFIX}/targets/x86_64-linux/include
+    $<IF:$<BOOL:${CONDA_INCLUDE_DIR}>,${CONDA_INCLUDE_DIR},$ENV{CONDA_PREFIX}>
 )
 
 # Add CUDA library path even though we don't link CUDA at runtime
-if(DEFINED ENV{CONDA_PREFIX})
+if(DEFINED CONDA_LIB_DIR)
+    target_link_directories(preprocess_dataset PRIVATE ${CONDA_LIB_DIR})
+elseif(DEFINED ENV{CONDA_PREFIX} AND NOT WIN32)
+    # fallback for non-Windows conda where CONDA_LIB_DIR may not have been set
     target_link_directories(preprocess_dataset PRIVATE $ENV{CONDA_PREFIX}/lib)
 endif()
 
@@ -72,7 +93,7 @@ target_link_libraries(preprocess_dataset PRIVATE
     Boost::filesystem
     Boost::system
     OpenMP::OpenMP_CXX
-    cudart  # CUDA runtime for pinned memory allocation
+    CUDA::cudart
 )
 
 target_compile_definitions(preprocess_dataset PRIVATE

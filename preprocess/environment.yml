@@ -6,17 +6,13 @@ dependencies:
   # Core
   - python=3.11
   - cmake>=3.25
-  - make
-  - pkg-config
+  - ninja
   
-  # Compilers
-  - gcc_linux-64=11.*
-  - gxx_linux-64=11.*
-  
-  # CUDA (for shared Geometry.h compatibility)
+  # CUDA
   - cuda-toolkit=12.8
   
-  # C++ Libraries (match tdbase)
+  # C++ Libraries
   - cgal>=6.0
-  - libgomp
   - tinyobjloader
+  - boost-cpp
+  - eigen

@@ -12,7 +12,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <sstream>
-#include "Geometry.h"
+// #include "Geometry.h"
+#include "../../common/include/Geometry.h"
 #include "DatasetLoaderFactory.h"
 #include "timer.h"
 

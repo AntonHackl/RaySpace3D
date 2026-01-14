@@ -11,9 +11,10 @@
 
 #include "himesh.h"
 #include "index.h"
-#include <pthread.h>
+// #include <pthread.h>
+#include <mutex>
 
-using namespace std;
+// using namespace std;
 
 namespace tdbase{
 
@@ -23,7 +24,7 @@ class Tile{
 	char *data_buffer = NULL;
 	size_t data_size = 0;
 	size_t tile_capacity = INT_MAX;
-	string tile_path;
+	std::string tile_path;
 
 	OctreeNode *tree = NULL;
 public:

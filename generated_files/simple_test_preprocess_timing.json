@@ -1,0 +1,16 @@
+{
+  "phases": {
+    "loading mesh dataset_1": {
+      "duration_us": 1694448,
+      "duration_ms": 1694.45
+    },
+    "writing geometry data_1": {
+      "duration_us": 2015701,
+      "duration_ms": 2015.70
+    }
+  },
+  "total": {
+    "duration_us": 3710157,
+    "duration_ms": 3710.16
+  }
+}

@@ -46,8 +46,11 @@
 // segments and TriDist() for finding closest points on a pair of triangles
 //--------------------------------------------------------------------------
 
-#include <pthread.h>
+// #include <pthread.h>
 #include "geometry.h"
+#include <algorithm>
+#include <iostream>
+using namespace std;
 
 namespace tdbase{
 

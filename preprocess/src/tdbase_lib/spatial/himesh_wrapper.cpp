@@ -74,7 +74,7 @@ HiMesh_Wrapper::HiMesh_Wrapper(char *dt, size_t i, Decoding_Type t){
 			box.update(*v);
 		}
 	}
-	pthread_mutex_init(&lock, NULL);
+	// pthread_mutex_init(&lock, NULL);
 }
 
 // manually
@@ -172,12 +172,12 @@ size_t HiMesh_Wrapper::get_voxel_size(int id, int lod){
 }
 
 void HiMesh_Wrapper::report_result(HiMesh_Wrapper *result){
-	pthread_mutex_lock(&lock);
+	lock.lock();
 	results.push_back(result);
 	if (global_ctx.print_result) {
 		printf("%ld %ld\n", id, result->id);
 	}
-	pthread_mutex_unlock(&lock);
+	lock.unlock();
 }
 
 }

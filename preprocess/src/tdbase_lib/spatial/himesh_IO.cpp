@@ -17,8 +17,13 @@
 * along with PPMC.  If not, see <http://www.gnu.org/licenses/>.
 *****************************************************************************/
 #include <fstream>
-#include <unistd.h>
+// #include <unistd.h>
 #include "himesh.h"
+
+#ifdef _MSC_VER
+#include <stdlib.h>
+#define __builtin_bswap32 _byteswap_ulong
+#endif
 
 namespace tdbase{
 
@@ -84,6 +89,10 @@ void HiMesh::writeFloat(float f)
   */
 float HiMesh::readFloat()
 {
+    if(p_data_size && dataOffset + sizeof(float) > p_data_size){
+        log("readFloat out of bounds: offset %zu size %zu", dataOffset, p_data_size);
+        assert(false && "readFloat out of bounds");
+    }
     float f = *(float *)(p_data + dataOffset);
     dataOffset += sizeof(float);
     return f;
@@ -113,6 +122,10 @@ Point HiMesh::readPoint()
   */
 int HiMesh::readInt()
 {
+    if(p_data_size && dataOffset + sizeof(int) > p_data_size){
+        log("readInt out of bounds: offset %zu size %zu", dataOffset, p_data_size);
+        assert(false && "readInt out of bounds");
+    }
     int i = *(int *)(p_data + dataOffset);
     dataOffset += sizeof(int);
     return i;
@@ -130,6 +143,10 @@ void HiMesh::writeInt(int i)
   */
 int16_t HiMesh::readInt16()
 {
+    if(p_data_size && dataOffset + sizeof(int16_t) > p_data_size){
+        log("readInt16 out of bounds: offset %zu size %zu", dataOffset, p_data_size);
+        assert(false && "readInt16 out of bounds");
+    }
     int16_t i = *(int16_t *)(p_data + dataOffset);
     dataOffset += sizeof(int16_t);
     return i;
@@ -148,6 +165,10 @@ void HiMesh::writeInt16(int16_t i)
   */
 uint16_t HiMesh::readuInt16()
 {
+    if(p_data_size && dataOffset + sizeof(uint16_t) > p_data_size){
+        log("readuInt16 out of bounds: offset %zu size %zu", dataOffset, p_data_size);
+        assert(false && "readuInt16 out of bounds");
+    }
     uint16_t i = *(uint16_t *)(p_data + dataOffset);
     dataOffset += sizeof(uint16_t);
     return i;
@@ -166,7 +187,11 @@ void HiMesh::writeuInt16(uint16_t i)
   */
 unsigned char HiMesh::readChar()
 {
-	unsigned char  i = *(unsigned char  *)(p_data + dataOffset);
+    if(p_data_size && dataOffset + sizeof(unsigned char) > p_data_size){
+        log("readChar out of bounds: offset %zu size %zu", dataOffset, p_data_size);
+        assert(false && "readChar out of bounds");
+    }
+    unsigned char  i = *(unsigned char  *)(p_data + dataOffset);
     dataOffset += sizeof(unsigned char );
     return i;
 }

@@ -37,7 +37,8 @@ Tile::Tile(std::vector<HiMesh_Wrapper *> &objs){
 	}
 
 #pragma omp parallel for
-	for(HiMesh_Wrapper *wr:objs){
+	for(int i = 0; i < (int)objs.size(); ++i){
+		HiMesh_Wrapper *wr = objs[i];
 		if(wr->type == MULTIMESH){
 			HiMesh *original = wr->get_meshes()[100];
 			for(int lod=20;lod<=80;lod+=20){
@@ -82,4 +83,3 @@ OctreeNode *Tile::build_octree(size_t leaf_size){
 }
 
 }
-

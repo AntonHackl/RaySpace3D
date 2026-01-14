@@ -9,6 +9,8 @@
 
 namespace tdbase{
 
+using uint = unsigned int;
+
 /*
  *
  * extract the skeleton of current polyhedron

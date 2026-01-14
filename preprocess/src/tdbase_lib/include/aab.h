@@ -20,7 +20,6 @@
 #include <map>
 #include <assert.h>
 #include <cstdint>
-using namespace std;
 
 namespace tdbase{
 
@@ -120,8 +119,8 @@ public:
 	size_t capacity = 0;
 
 	// offset and volume information
-	map<int, size_t> offset_lod;
-	map<int, size_t> volume_lod;
+	std::map<int, size_t> offset_lod;
+	std::map<int, size_t> volume_lod;
 
 	bool owned = false;
 public:

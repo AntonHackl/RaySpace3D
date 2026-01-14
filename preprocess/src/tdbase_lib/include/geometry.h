@@ -7,8 +7,6 @@
 #include <float.h>
 #include "mygpu.h"
 #include "util.h"
-#include "pthread.h"
-using namespace std;
 
 namespace tdbase{
 
@@ -109,12 +107,12 @@ public:
 	float min_dist; // for distance range
 	float max_dist;
 	void print(){
-		cout<<"p1:\t"<<p1<<endl;
-		cout<<"p2:\t"<<p2<<endl;
-		cout<<"intersected:\t"<<intersected<<endl;
-		cout<<"distance:\t"<<distance<<endl;
-		cout<<"min_dist:\t"<<min_dist<<endl;
-		cout<<"max_dist:\t"<<max_dist<<endl;
+		std::cout<<"p1:\t"<<p1<<std::endl;
+		std::cout<<"p2:\t"<<p2<<std::endl;
+		std::cout<<"intersected:\t"<<intersected<<std::endl;
+		std::cout<<"distance:\t"<<distance<<std::endl;
+		std::cout<<"min_dist:\t"<<min_dist<<std::endl;
+		std::cout<<"max_dist:\t"<<max_dist<<std::endl;
 	}
 } ;
 
@@ -168,8 +166,8 @@ result_container MeshInt(const float *data1, const float *data2, size_t size1, s
 void TriInt_batch_gpu(gpu_info *gpu, const float *data, const uint32_t *offset_size, const float *hausdorff, result_container *result, const uint32_t batch_num, const uint32_t triangle_num);
 
 class geometry_computer{
-	pthread_mutex_t gpu_lock;
-	pthread_mutex_t cpu_lock;
+	std::mutex gpu_lock;
+	std::mutex cpu_lock;
 	int max_thread_num = tdbase::get_num_threads();
 	bool cpu_busy = false;
 	bool gpu_busy = false;
@@ -179,13 +177,13 @@ class geometry_computer{
 	void release_gpu(gpu_info *info);
 
 	char *d_cuda = NULL;
-	vector<gpu_info *> gpus;
+	std::vector<gpu_info *> gpus;
 
 public:
 	~geometry_computer();
 	geometry_computer(){
-		pthread_mutex_init(&cpu_lock, NULL);
-		pthread_mutex_init(&gpu_lock, NULL);
+		// pthread_mutex_init(&cpu_lock, NULL);
+		// pthread_mutex_init(&gpu_lock, NULL);
 	}
 
 	bool init_gpus();

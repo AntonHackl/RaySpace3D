@@ -90,8 +90,10 @@ HiMesh::HiMesh(char *data, size_t dsize, bool owndata):
 	if(owndata){
 		p_data = new char[dsize];
 		memcpy(p_data, data, dsize);
+		p_data_size = dsize;
 	}else{
 		p_data = data;
+		p_data_size = dsize;
 	}
 	decodeBaseMesh();
 	// Set the vertices of the edge that is the departure of the coding and decoding conquests.

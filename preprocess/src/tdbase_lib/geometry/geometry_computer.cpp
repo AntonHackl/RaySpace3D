@@ -8,6 +8,9 @@
 #include "geometry.h"
 #include "mygpu.h"
 #include "query_context.h"
+#include <thread>
+#include <vector>
+#include <algorithm>
 
 
 namespace tdbase{
@@ -29,12 +32,12 @@ void *MeshDist_unit(void *params_void){
 
 bool geometry_computer::request_cpu(){
 	if(cpu_busy==false){
-		pthread_mutex_lock(&cpu_lock);
+		cpu_lock.lock();
 		if(cpu_busy==false){
 			cpu_busy = true;
 			return true;
 		}else{
-			pthread_mutex_unlock(&cpu_lock);
+			cpu_lock.unlock();
 		}
 	}
 	return false;
@@ -42,7 +45,7 @@ bool geometry_computer::request_cpu(){
 void geometry_computer::release_cpu(){
 	assert(cpu_busy);
 	cpu_busy = false;
-	pthread_mutex_unlock(&cpu_lock);
+	cpu_lock.unlock();
 }
 
 #ifdef USE_GPU
@@ -52,13 +55,13 @@ gpu_info *geometry_computer::request_gpu(int min_size, bool force){
 	do{
 		for(gpu_info *info:gpus){
 			if(!info->busy&&info->mem_size>min_size+1){
-				pthread_mutex_lock(&info->lock);
+				info->lock.lock();
 				if(!info->busy){
 					info->busy = true;
 					// will be released in release_gpu() function
 					return info;
 				}
-				pthread_mutex_unlock(&info->lock);
+				info->lock.unlock();
 			}
 		}
 	}while(force);
@@ -67,7 +70,7 @@ gpu_info *geometry_computer::request_gpu(int min_size, bool force){
 
 void geometry_computer::release_gpu(gpu_info *info){
 	assert(info->busy);
-	pthread_mutex_unlock(&info->lock);
+	info->lock.unlock();
 	info->busy = false;
 }
 
@@ -110,12 +113,13 @@ void geometry_computer::get_distance_cpu(geometry_param &cc){
 
 	int each_thread = cc.pair_num/max_thread_num;
 	int thread_num = max_thread_num;
-	if(each_thread==0){
+	if (each_thread == 0){
 		thread_num = cc.pair_num;
 	}
 	each_thread++;
-	pthread_t threads[thread_num];
-	geometry_param params[thread_num];
+	
+	std::vector<std::thread> threads;
+	std::vector<geometry_param> params(thread_num);
 
 	int i=0;
 	for(;i<thread_num;i++){
@@ -125,20 +129,19 @@ void geometry_computer::get_distance_cpu(geometry_param &cc){
 		}
 
 		params[i] = cc;
-		params[i].pair_num = min(each_thread, (int)cc.pair_num-start);
+		params[i].pair_num = std::min(each_thread, (int)cc.pair_num-start);
 		params[i].offset_size = cc.offset_size+start*4;
 		params[i].data = cc.data;
 		params[i].hausdorff = cc.hausdorff;
 		params[i].id = i+1;
 		params[i].results = cc.results+start;
-		pthread_create(&threads[i], NULL, MeshDist_unit, (void *)&params[i]);
+		threads.emplace_back(MeshDist_unit, (void *)&params[i]);
 	}
 	if(max_thread_num>1){
 		log("%d threads started to get distance", thread_num);
 	}
-	for(; i > 0; i--){
-		void *status;
-		pthread_join(threads[i-1], &status);
+	for(auto& t : threads){
+		t.join();
 	}
 }
 
@@ -172,8 +175,9 @@ void *TriInt_unit(void *params_void){
 
 void geometry_computer::get_intersect_cpu(geometry_param &cc){
 
-	pthread_t threads[max_thread_num];
-	geometry_param params[max_thread_num];
+	std::vector<std::thread> threads;
+	std::vector<geometry_param> params(max_thread_num);
+
 	int each_thread = cc.pair_num/max_thread_num+1;
 	int tnum = 0;
 	for(tnum=0;tnum<max_thread_num;tnum++){
@@ -183,17 +187,16 @@ void geometry_computer::get_intersect_cpu(geometry_param &cc){
 		}
 		params[tnum] = cc;
 		params[tnum].id = tnum+1;
-		params[tnum].pair_num = min(each_thread, (int)cc.pair_num-start);
+		params[tnum].pair_num = std::min(each_thread, (int)cc.pair_num-start);
 		params[tnum].offset_size = cc.offset_size+start*4;
 		params[tnum].data = cc.data;
 		params[tnum].hausdorff = cc.hausdorff;
 		params[tnum].results = cc.results+start;
-		pthread_create(&threads[tnum], NULL, TriInt_unit, (void *)&params[tnum]);
+		threads.emplace_back(TriInt_unit, (void *)&params[tnum]);
 	}
 	log("%d threads started", max_thread_num);
-	for(int i = 0; i < tnum; i++){
-		void *status;
-		pthread_join(threads[i], &status);
+	for(auto& t : threads){
+		t.join();
 	}
 }
 

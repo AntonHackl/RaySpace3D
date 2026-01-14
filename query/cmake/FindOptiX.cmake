@@ -31,28 +31,41 @@
 # Our initial guess will be within the SDK.
 
 if (WIN32)
-#		set(OptiX_INSTALL_DIR "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.1.0" CACHE PATH "Path to OptiX installed location.")
-	find_path(searched_OptiX_INSTALL_DIR
-		NAME include/optix.h
-		PATHS
-    "C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.0.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.3.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.2.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.1.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.0.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 6.5.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 6.0.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.1.1"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.1.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.0"
-		"C:/ProgramData/NVIDIA Corporation/OptiX SDK *"
-	)
-	mark_as_advanced(searched_OptiX_INSTALL_DIR)
-  set(OptiX_INSTALL_DIR ${searched_OptiX_INSTALL_DIR} CACHE PATH "Path to OptiX installed location.")
+  # If the user passed -DOptiX_INSTALL_DIR to CMake (or the build script set
+  # the environment variable), prefer that. Otherwise search common install
+  # locations for the SDK.
+  if(NOT DEFINED OptiX_INSTALL_DIR OR OptiX_INSTALL_DIR STREQUAL "")
+    find_path(searched_OptiX_INSTALL_DIR
+      NAME include/optix.h
+      PATHS
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.0.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.3.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.2.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.1.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 7.0.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 6.5.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 6.0.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.1.1"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.1.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.1"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK 5.0.0"
+      "C:/ProgramData/NVIDIA Corporation/OptiX SDK *"
+    )
+    mark_as_advanced(searched_OptiX_INSTALL_DIR)
+    if (searched_OptiX_INSTALL_DIR)
+      set(OptiX_INSTALL_DIR ${searched_OptiX_INSTALL_DIR} CACHE PATH "Path to OptiX installed location.")
+    else()
+      # Leave OptiX_INSTALL_DIR undefined/empty so callers can set it.
+      set(OptiX_INSTALL_DIR "" CACHE PATH "Path to OptiX installed location.")
+    endif()
+  else()
+    mark_as_advanced(OptiX_INSTALL_DIR)
+  endif()
 else()
   set(OptiX_INSTALL_DIR $ENV{OptiX_INSTALL_DIR} CACHE PATH "Path to OptiX installed location.")
 endif()
+
+message(STATUS "OptiX_INSTALL_DIR='${OptiX_INSTALL_DIR}'")
 # The distribution contains both 32 and 64 bit libraries.  Adjust the library
 # search path based on the bit-ness of the build.  (i.e. 64: bin64, lib64; 32:
 # bin, lib).  Note that on Mac, the OptiX library is a universal binary, so we
@@ -89,14 +102,18 @@ endmacro()
 #OPTIX_find_api_library(optix_prime 7.0.0)
 
 # Include
+if(DEFINED OptiX_INSTALL_DIR AND NOT OptiX_INSTALL_DIR STREQUAL "")
+  find_path(OptiX_INCLUDE
+    NAMES optix.h
+    PATHS "${OptiX_INSTALL_DIR}/include"
+    NO_DEFAULT_PATH
+    )
+endif()
 find_path(OptiX_INCLUDE
   NAMES optix.h
-  PATHS "${OptiX_INSTALL_DIR}/include"
-  NO_DEFAULT_PATH
   )
-find_path(OptiX_INCLUDE
-  NAMES optix.h
-  )
+
+message(STATUS "OptiX include found at: ${OptiX_INCLUDE}")
 
 # Check to make sure we found what we were looking for
 function(OptiX_report_error error_message required)

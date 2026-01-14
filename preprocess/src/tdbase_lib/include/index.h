@@ -7,6 +7,9 @@
 
 #ifndef HISPEED_INDEX_H_
 #define HISPEED_INDEX_H_
+
+#include "util.h"
+
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -19,13 +22,11 @@
 
 #include "aab.h"
 #include "RTree.h"
-#include "util.h"
 
 #define FillFactor 0.9
 #define IndexCapacity 10
 #define LeafCapacity 50
 
-using namespace std;
 namespace tdbase{
 
 
@@ -39,7 +40,7 @@ public:
 	bool isLeaf;
 	bool canBeSplit;
 	OctreeNode* children[8];
-	vector<weighted_aab*> objectList;
+	std::vector<weighted_aab*> objectList;
 	bool isroot(){
 		return level==0;
 	}
@@ -48,9 +49,9 @@ public:
 	bool addObject(weighted_aab *object);
 
 	bool intersects(weighted_aab *object);
-	void query_knn(weighted_aab *box, vector<pair<int, range>> &results, float &max_maxdist, const int k=1);
-	void query_within(weighted_aab *box, vector<pair<int, range>> &results, const float min_farthest);
-	void query_intersect(weighted_aab *box, vector<int> &results);
+	void query_knn(weighted_aab *box, std::vector<std::pair<int, range>> &results, float &max_maxdist, const int k=1);
+	void query_within(weighted_aab *box, std::vector<std::pair<int, range>> &results, const float min_farthest);
+	void query_intersect(weighted_aab *box, std::vector<int> &results);
 
 };
 OctreeNode *build_octree(std::vector<weighted_aab*> &mbbs, int num_tiles);

@@ -1,0 +1,58 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Preprocess (Small DT)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/preprocess/bin/Debug/preprocess_dataset.exe",
+            "args": [
+                "--dataset", "${workspaceFolder}/generated_files/test_small_n_nv15_nu30_vs100_r30.dt",
+                "--output-geometry", "${workspaceFolder}/generated_files/simple_test_geometry_n.txt",
+                "--output-timing", "${workspaceFolder}/generated_files/simple_test_preprocess_timing.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/generated_files",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "C:\\Users\\anton\\miniconda3\\envs\\rayspace3d_preprocess\\Library\\bin;C:\\Users\\anton\\miniconda3\\envs\\rayspace3d_preprocess\\Scripts;C:\\Users\\anton\\miniconda3\\envs\\rayspace3d_preprocess;${env:PATH}"
+                }
+            ],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build Preprocess"
+        },
+        {
+            "name": "Query: Overlap (Small DT)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/query/bin/Debug/raytracer_mesh_overlap.exe",
+            "args": [
+                "--mesh1", "${workspaceFolder}/generated_files/simple_test_geometry_n.txt",
+                "--mesh2", "${workspaceFolder}/generated_files/simple_test_geometry_v.txt",
+                "--output", "${workspaceFolder}/generated_files/simple_test_overlap_timing.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/generated_files",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build Query"
+        },
+        {
+            "name": "Query: Intersection (Small DT)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/query/bin/Debug/raytracer_mesh_intersection.exe",
+            "args": [
+                "--mesh1", "${workspaceFolder}/generated_files/simple_test_geometry.txt",
+                "--mesh2", "${workspaceFolder}/generated_files/simple_test_geometry.txt",
+                "--output", "${workspaceFolder}/generated_files/simple_test_intersection_timing.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/generated_files",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build Query"
+        }
+    ]
+}

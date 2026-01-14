@@ -26,6 +26,11 @@
 
 #include <iostream>
 #include <fstream>
+#include <vector>
+#include <list>
+#include <deque>
+#include <string>
+#include <algorithm>
 #include <stdint.h>
 #include <queue>
 #include <assert.h>
@@ -43,6 +48,7 @@
 
 #include <CGAL/Exact_predicates_exact_constructions_kernel.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+
 
 #include <CGAL/box_intersection_d.h>
 #include <CGAL/Bbox_3.h>
@@ -76,6 +82,7 @@
 #include "geometry.h"
 #include "query_context.h"
 
+using namespace std;
 
 namespace tdbase{
 
@@ -93,7 +100,7 @@ const int DECOMPRESSION_MODE_ID = 1;
 
 const int NUM_FACET_PER_VOXEL = 100;
 
-using namespace std;
+// using namespace std;
 namespace SMS = CGAL::Surface_mesh_simplification ;
 
 // definition for the CGAL library
@@ -398,11 +405,11 @@ public:
 	}
 
 	inline void updateProxyHausdorff(float prh){
-		proxy_hausdorff_distance = max(prh, proxy_hausdorff_distance);
+		proxy_hausdorff_distance = std::max(prh, proxy_hausdorff_distance);
 	}
 
 	inline void updateHausdorff(float hd){
-		hausdorff_distance = max(hd, hausdorff_distance);
+		hausdorff_distance = std::max(hd, hausdorff_distance);
 	}
 
 	inline float getProxyHausdorff(){
@@ -412,7 +419,7 @@ public:
 	inline float getHausdorff(){
 		return hausdorff_distance;
 	}
-	vector<Triangle> triangles;
+	std::vector<Triangle> triangles;
 	MyTriangle *tri = NULL;
 };
 
@@ -474,15 +481,16 @@ class HiMesh: public CGAL::Polyhedron_3< MyKernel, MyItems >
 	// The compressed data;
 	char *p_data;
 	size_t dataOffset = 0; // the offset to read and write.
+	size_t p_data_size = 0; // total size of p_data when using external buffer
 
 	aab mbb; // the bounding box
 	TriangleTree *triangle_tree = NULL;
-	list<Triangle> aabb_triangles;
+	std::list<Triangle> aabb_triangles;
 
-	vector<MyTriangle *> original_facets;
+	std::vector<MyTriangle *> original_facets;
 
 	// Store the maximum Hausdorf Distance
-	vector<pair<float, float>> globalHausdorfDistance;
+	std::vector<std::pair<float, float>> globalHausdorfDistance;
 	bool own_data = true;
 
 public:
@@ -492,7 +500,7 @@ public:
 	static bool use_byte_coding;
 public:
 	// constructor for encoding
-	HiMesh(string &str, bool completeop = false);
+	HiMesh(std::string &str, bool completeop = false);
 
 	// constructors for decoding
 	HiMesh(char *data, size_t dsize, bool own_data = true);
@@ -586,12 +594,12 @@ public:
 	size_t fill_segments(float *&segments);
 	size_t fill_triangles(float *&triangles);
 	size_t fill_hausdorf_distances(float *&hausdorf);
-	size_t fill_voxels(vector<Voxel *> &voxels);
+	size_t fill_voxels(std::vector<Voxel *> &voxels);
 
-	list<Point> get_vertices();
-	list<Segment> get_segments();
-	list<Triangle> get_triangles();
-	map<float, Face_iterator> encode_facets();
+	std::list<Point> get_vertices();
+	std::list<Segment> get_segments();
+	std::list<Triangle> get_triangles();
+	std::map<float, Face_iterator> encode_facets();
 
 	/*
 	 * query-related functions
@@ -609,9 +617,9 @@ public:
 	float get_volume();
 
 	// indexes
-	vector<Point> get_skeleton_points(int num_skeleton_points);
-	vector<Voxel *> generate_voxels_skeleton(int voxel_size = NUM_FACET_PER_VOXEL);
-	vector<Voxel *> voxelization(int voxel_size);
+	std::vector<Point> get_skeleton_points(int num_skeleton_points);
+	std::vector<Voxel *> generate_voxels_skeleton(int voxel_size = NUM_FACET_PER_VOXEL);
+	std::vector<Voxel *> voxelization(int voxel_size);
 
 	// meta information of the mesh
 	void updateMBB(); // bounding box
@@ -704,7 +712,7 @@ public:
 	// description of the polyhedron
 	size_t id = -1;
 	weighted_aab box;
-	vector<Voxel *> voxels;
+	std::vector<Voxel *> voxels;
 
 	// used for retrieving compressed data from disk
 	char *data_buffer = NULL;
@@ -713,8 +721,8 @@ public:
 	char *meta_buffer = NULL;
 	size_t meta_size = 0;
 
-	pthread_mutex_t lock;
-	vector<HiMesh_Wrapper *> results;
+	std::mutex lock;
+	std::vector<HiMesh_Wrapper *> results;
 	int cur_lod = -1;
 
 public:

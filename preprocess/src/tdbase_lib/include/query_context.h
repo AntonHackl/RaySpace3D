@@ -15,9 +15,9 @@
 
 #include "util.h"
 #include "geometry.h"
+using namespace std;
 #include "popl.h"
 
-using namespace std;
 using namespace popl;
 
 namespace tdbase{
@@ -25,7 +25,8 @@ namespace tdbase{
 class Tile;
 class query_context{
 public:
-	pthread_mutex_t lk;
+	// std::mutex lk;
+	std::shared_ptr<std::mutex> lk = std::make_shared<std::mutex>();
 
 	//time
 	double index_time = 0;
@@ -50,7 +51,7 @@ public:
 	int hausdorf_level = 2; // 0 for no hausdorff, 1 for hausdorff at the mesh level, 2 for triangle level hausdorff
 	size_t max_num_objects1 = LONG_MAX;
 	size_t max_num_objects2 = LONG_MAX;
-	vector<int> lods;
+	std::vector<int> lods;
 	int verbose = 0;
 	bool counter_clock = false;
 	bool disable_byte_encoding = false;
@@ -66,14 +67,14 @@ public:
 
 	query_context(){
 		num_thread = tdbase::get_num_threads();
-		pthread_mutex_init(&lk, NULL);
+		// pthread_mutex_init(&lk, NULL);
 	}
 
 	void lock(){
-		pthread_mutex_lock(&lk);
+		lk->lock();
 	}
 	void unlock(){
-		pthread_mutex_unlock(&lk);
+		lk->unlock();
 	}
 
 	int highest_lod(){

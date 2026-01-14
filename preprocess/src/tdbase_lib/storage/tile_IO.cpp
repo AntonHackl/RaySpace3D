@@ -20,7 +20,7 @@ void Tile::load(){
 	data_size = file_size(tile_path.c_str());
 	data_buffer = new char[data_size];
 	//process_lock();
-	FILE *dt_fs = fopen(tile_path.c_str(), "r");
+	FILE *dt_fs = fopen(tile_path.c_str(), "rb");
 	if(dt_fs == NULL){
 		log("failed to open file %s",tile_path.c_str());
 	}
@@ -31,7 +31,13 @@ void Tile::load(){
 	//process_unlock();
 
 	// parsing the metadata from the dt file
-	Decoding_Type dtype = (Decoding_Type)data_buffer[0];
+	unsigned char dtype_uc = static_cast<unsigned char>(data_buffer[0]);
+	if(dtype_uc > (unsigned char)MULTIMESH){
+		log("Invalid tile file type byte: %u in %s", (unsigned)dtype_uc, tile_path.c_str());
+		delete [] data_buffer;
+		return;
+	}
+	Decoding_Type dtype = (Decoding_Type)dtype_uc;
 	size_t offset = 1;// the first byte is the file type, raw or compressed
 	size_t index = 0;
 	while(offset < data_size){

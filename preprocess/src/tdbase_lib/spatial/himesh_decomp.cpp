@@ -278,7 +278,7 @@ void HiMesh::HausdorffDecodingStep(){
 /**
   * Insert center vertices.
   */
-pthread_mutex_t mtx;
+std::mutex mtx;
 
 void HiMesh::insertRemovedVertices() {
 
@@ -307,10 +307,10 @@ void HiMesh::insertRemovedVertices() {
         assert(!h->isNew());  
         
         if (f->isSplittable()) {
-            pthread_mutex_lock(&mtx);
+            mtx.lock();
             // Insert the vertex.
             Halfedge_handle hehNewVertex = create_center_vertex(h);
-            pthread_mutex_unlock(&mtx);
+            mtx.unlock();
 
             hehNewVertex->vertex()->point() = f->getRemovedVertexPos();
             // Mark all the created edges as new.
@@ -328,14 +328,19 @@ void HiMesh::insertRemovedVertices() {
   * Remove all the marked edges.
   */
 void HiMesh::removeInsertedEdges() {
-    pthread_mutex_lock(&mtx);
+    mtx.lock();
     // todo: use locking for avoid competetion in CGAL
-	for (HiMesh::Halfedge_iterator hit = halfedges_begin(); hit!=halfedges_end(); hit++) {
+    // Collect targets first to avoid iterator invalidation when modifying the polyhedron
+    std::vector<Halfedge_handle> to_remove;
+    for (HiMesh::Halfedge_iterator hit = halfedges_begin(); hit!=halfedges_end(); ++hit) {
         if(hit->isAdded()){
-            join_facet(hit);
-		}
-	}
-    pthread_mutex_unlock(&mtx);
+            to_remove.push_back((Halfedge_handle)hit);
+        }
+    }
+    for (Halfedge_handle hh : to_remove) {
+        join_facet(hh);
+    }
+    mtx.unlock();
 }
 
 }
