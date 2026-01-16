@@ -17,6 +17,7 @@
 #include "Geometry.h"
 #include "GeometryIO.h"
 #include "../cuda/mesh_overlap.h"
+#include "../cuda/selectivity_estimation.h"
 #include "../cuda/mesh_overlap_deduplication.h"
 #include "scan_utils.h"
 #include "common.h"
@@ -85,6 +86,8 @@ int main(int argc, char* argv[]) {
     int numberOfRuns = 1;
     bool exportResults = true;
     int warmupRuns = 2;
+    float loadFactor = 0.75f;
+    int manualHashSize = 0;
     
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
@@ -110,6 +113,12 @@ int main(int argc, char* argv[]) {
             else if (arg == "--no-export") {
                 exportResults = false;
             }
+            else if (arg == "--load-factor" && i + 1 < argc) {
+                loadFactor = std::stof(argv[++i]);
+            }
+            else if (arg == "--hash-size" && i + 1 < argc) {
+                manualHashSize = std::atoi(argv[++i]);
+            }
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "Usage: " << argv[0] << " [--mesh1 <path>] [--mesh2 <path>] [--output <json_output_file>] [--runs <number>] [--ptx <ptx_file>]" << std::endl;
                 std::cout << "Options:" << std::endl;
@@ -119,6 +128,8 @@ int main(int argc, char* argv[]) {
                 std::cout << "  --runs <number>        Number of times to run the query (for performance testing)" << std::endl;
                 std::cout << "  --warmup-runs <number> Number of warmup iterations" << std::endl;
                 std::cout << "  --ptx <ptx_file>       Path to compiled PTX file (default: auto-detect)" << std::endl;
+                std::cout << "  --load-factor <f>      Target load factor for hash table (default: 0.75)" << std::endl;
+                std::cout << "  --hash-size <n>        Manually set hash table size (overrides estimation)" << std::endl;
                 std::cout << "  --no-export            Do not export results to CSV" << std::endl;
                 std::cout << "  --help, -h             Show this help message" << std::endl;
                 return 0;
@@ -189,8 +200,74 @@ int main(int argc, char* argv[]) {
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
     
-    // Allocate Hash Table (16M items = 128MB)
-    int hash_table_size = 16777216;
+    // Determine Hash Table Size
+    int hash_table_size = 16777216; // Default
+    if (manualHashSize > 0) {
+        hash_table_size = manualHashSize;
+        std::cout << "Using manual hash table size: " << hash_table_size << std::endl;
+    } else {
+        std::cout << "Estimating selectivity..." << std::endl;
+        
+        // Calculate average triangles per object for better estimation
+        // Use generic auto to support PinnedAllocator vectors
+        auto getNumObjects = [](const auto& mapping) {
+            if (mapping.empty()) return 1;
+            int maxId = -1;
+            // Iterate manually to avoid <algorithm> include dependency issues if not present, though main has it.
+            for (int id : mapping) {
+                if (id > maxId) maxId = id;
+            }
+            return maxId + 1;
+        };
+
+        int mesh1NumObjects = getNumObjects(mesh1Data.triangleToObject);
+        int mesh2NumObjects = getNumObjects(mesh2Data.triangleToObject);
+        
+        float avgTris1 = (float)mesh1NumTriangles / std::max(1, mesh1NumObjects);
+        float avgTris2 = (float)mesh2NumTriangles / std::max(1, mesh2NumObjects);
+        
+        size_t estimatedPairs = estimateSelectivityGPU(mesh1Data.eulerHistogram, mesh2Data.eulerHistogram);
+        
+        // Post-process logic: if we were in fallback mode (triangles), we must scale the result.
+        // We know we are in fallback mode if object counts are empty.
+        bool fallbackMode = mesh1Data.eulerHistogram.object_counts.empty() || mesh2Data.eulerHistogram.object_counts.empty();
+        
+        if (fallbackMode && estimatedPairs > 0) {
+            std::cout << "  [Heuristic Scaling] Object counts missing. Scaling triangle pair estimate..." << std::endl;
+            std::cout << "  Mesh1 Avg Tris/Obj: " << avgTris1 << std::endl;
+            std::cout << "  Mesh2 Avg Tris/Obj: " << avgTris2 << std::endl;
+            
+            // Re-apply Heuristic: Object pairs ~ Raw Triangle Pairs / Min(AvgTrisA, AvgTrisB)
+            double scalingFactor = 1.0 / std::min(avgTris1, avgTris2);
+            size_t scaledEstimate = (size_t)(estimatedPairs * scalingFactor);
+            if (scaledEstimate == 0) scaledEstimate = 1;
+            
+            std::cout << "  Scaling Factor: " << scalingFactor << std::endl;
+            std::cout << "  Original Estimate (Triangle Pairs): " << estimatedPairs << std::endl;
+            std::cout << "  Final Scaled Estimate (Object Pairs): " << scaledEstimate << std::endl;
+            estimatedPairs = scaledEstimate;
+        } else {
+             std::cout << "  [Direct Estimation] Using result directly." << std::endl;
+             std::cout << "  Final Estimate (Object Pairs): " << estimatedPairs << std::endl;
+        }
+        
+        if (estimatedPairs > 0) {
+            // Apply load factor
+            size_t recommended = static_cast<size_t>(estimatedPairs / loadFactor);
+            // Ensure some minimum sanity limits (e.g. 64K minimum)
+            recommended = std::max((size_t)65536, recommended);
+            
+            size_t powerOf2 = 1;
+            while (powerOf2 < recommended) powerOf2 <<= 1;
+            hash_table_size = static_cast<int>(powerOf2);
+             
+            std::cout << "Final Hash Table Size (Load " << loadFactor << " + NextPow2): " << hash_table_size << std::endl;
+        } else {
+             std::cout << "Estimation unavailable (0 pairs or missing histograms). Using default: " << hash_table_size << std::endl;
+        }
+    }
+
+    // Allocate Hash Table
     unsigned long long* d_hash_table = nullptr;
     CUDA_CHECK(cudaMalloc(&d_hash_table, hash_table_size * sizeof(unsigned long long)));
     

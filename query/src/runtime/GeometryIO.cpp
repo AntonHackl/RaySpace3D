@@ -71,12 +71,60 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
         }
     }
 
+    // Optional: Euler Histogram Data (Read until EOF)
+    while (std::getline(file, line)) {
+        if (line.rfind("euler_grid_dims:", 0) == 0) {
+            std::stringstream ss(line.substr(16));
+            ss >> geometry.eulerHistogram.nx >> geometry.eulerHistogram.ny >> geometry.eulerHistogram.nz;
+        }
+        else if (line.rfind("euler_bbox:", 0) == 0) {
+            std::stringstream ss(line.substr(11));
+            ss >> geometry.eulerHistogram.minBound.x >> geometry.eulerHistogram.minBound.y >> geometry.eulerHistogram.minBound.z
+                >> geometry.eulerHistogram.maxBound.x >> geometry.eulerHistogram.maxBound.y >> geometry.eulerHistogram.maxBound.z;
+
+            // Recompute cell size
+            if (geometry.eulerHistogram.nx > 0) {
+                float3& minB = geometry.eulerHistogram.minBound;
+                float3& maxB = geometry.eulerHistogram.maxBound;
+                geometry.eulerHistogram.cellSize = {
+                    (maxB.x - minB.x) / geometry.eulerHistogram.nx,
+                    (maxB.y - minB.y) / geometry.eulerHistogram.ny,
+                    (maxB.z - minB.z) / geometry.eulerHistogram.nz
+                };
+            }
+        }
+        else if (line.rfind("euler_data_v:", 0) == 0) {
+            std::stringstream ss(line.substr(13));
+            int val;
+            while (ss >> val) geometry.eulerHistogram.v_counts.push_back(val);
+        }
+        else if (line.rfind("euler_data_e:", 0) == 0) {
+            std::stringstream ss(line.substr(13));
+            int val;
+            while (ss >> val) geometry.eulerHistogram.e_counts.push_back(val);
+        }
+        else if (line.rfind("euler_data_f:", 0) == 0) {
+            std::stringstream ss(line.substr(13));
+            int val;
+            while (ss >> val) geometry.eulerHistogram.f_counts.push_back(val);
+        }
+        else if (line.rfind("euler_data_o:", 0) == 0) {
+            std::stringstream ss(line.substr(13));
+            int val;
+            while (ss >> val) geometry.eulerHistogram.object_counts.push_back(val);
+        }
+    }
+
     file.close();
 
     std::cout << "Loaded preprocessed geometry:" << std::endl;
     std::cout << "  Total vertices: " << geometry.vertices.size() << std::endl;
     std::cout << "  Total triangles: " << geometry.indices.size() << std::endl;
     std::cout << "  Triangle-to-object mappings: " << geometry.triangleToObject.size() << std::endl;
+    if (geometry.eulerHistogram.nx > 0) {
+        std::cout << "  Euler Histogram loaded: " << geometry.eulerHistogram.nx << "x"
+            << geometry.eulerHistogram.ny << "x" << geometry.eulerHistogram.nz << " grid" << std::endl;
+    }
 
     // Vectors are now pinned memory (via PinnedAllocator)
     // No need to copy to separate buffers or clear vectors.

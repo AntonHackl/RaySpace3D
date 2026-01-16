@@ -100,6 +100,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # CUDA Sources
 set(CUDA_DIR ${SRC_DIR}/cuda)
 set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DIR}/mesh_intersection.cu)
+set(SELECTIVITY_ESTIMATION_SOURCE ${CUDA_DIR}/selectivity_estimation.cu)
 set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
 set(MESH_OVERLAP_DEDUP_SOURCE ${CUDA_DIR}/mesh_overlap_deduplication.cu)
 set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
@@ -185,7 +186,8 @@ add_executable(raytracer_mesh_overlap
     ${RAYTRACING_SOURCES} 
     ${RESULT_COMPACTION_SOURCE} 
     ${MESH_OVERLAP_DEDUP_SOURCE} 
-    ${SCAN_UTILS_SOURCE})
+    ${SCAN_UTILS_SOURCE}
+    ${SELECTIVITY_ESTIMATION_SOURCE})
 
 add_executable(raytracer_mesh_intersection 
     ${MESH_INTERSECTION_APP_SOURCE} 

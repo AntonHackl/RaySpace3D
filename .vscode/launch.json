@@ -9,7 +9,8 @@
             "args": [
                 "--dataset", "${workspaceFolder}/generated_files/test_small_n_nv15_nu30_vs100_r30.dt",
                 "--output-geometry", "${workspaceFolder}/generated_files/simple_test_geometry_n.txt",
-                "--output-timing", "${workspaceFolder}/generated_files/simple_test_preprocess_timing.json"
+                "--output-timing", "${workspaceFolder}/generated_files/simple_test_preprocess_timing.json",
+                "--euler-grid-size", "128"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/generated_files",

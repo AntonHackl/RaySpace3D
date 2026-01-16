@@ -1,16 +1,20 @@
 {
   "phases": {
     "loading mesh dataset_1": {
-      "duration_us": 1694448,
-      "duration_ms": 1694.45
+      "duration_us": 1686847,
+      "duration_ms": 1686.85
+    },
+    "computing euler histogram_1": {
+      "duration_us": 242094,
+      "duration_ms": 242.09
     },
     "writing geometry data_1": {
-      "duration_us": 2015701,
-      "duration_ms": 2015.70
+      "duration_us": 12930496,
+      "duration_ms": 12930.50
     }
   },
   "total": {
-    "duration_us": 3710157,
-    "duration_ms": 3710.16
+    "duration_us": 14859445,
+    "duration_ms": 14859.44
   }
 }
