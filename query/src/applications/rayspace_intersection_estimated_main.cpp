@@ -10,6 +10,7 @@
 #include <sstream>
 #include <set>
 #include <algorithm>
+#include <cmath>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -75,9 +76,38 @@ QueryResults executeHashQuery(
     return {d_merged_results, numUnique};
 }
 
+// Helper to calculate next power of 2
+unsigned int nextPow2(unsigned int v) {
+    if (v == 0) return 1;
+    v--;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v++;
+    return v;
+}
+
+// Helper to calculate global average size of objects from grid statistics
+float calculateGlobalAvgSize(const std::vector<GridCell>& cells) {
+    double totalSize = 0.0;
+    long long totalCount = 0;
+    
+    for (const auto& cell : cells) {
+        if (cell.TouchCount > 0) {
+            // Un-average to get sum of sizes in this cell
+            totalSize += (double)cell.AvgSizeMean * (double)cell.TouchCount;
+            totalCount += cell.TouchCount;
+        }
+    }
+    
+    if (totalCount == 0) return 0.0f;
+    return (float)(totalSize / totalCount);
+}
+
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
-    timer.start("Data Reading");
     
     std::string mesh1Path = "";
     std::string mesh2Path = "";
@@ -119,16 +149,26 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    timer.start("Load Mesh1");
     GeometryData mesh1 = loadGeometryFromFile(mesh1Path);
+    if (mesh1.vertices.empty()) {
+        std::cerr << "Error loading mesh1." << std::endl;
+        return 1;
+    }
+    
+    timer.next("Load Mesh2");
     GeometryData mesh2 = loadGeometryFromFile(mesh2Path);
     
-    if (mesh1.vertices.empty() || mesh2.vertices.empty()) {
-        std::cerr << "Error loading meshes." << std::endl;
+    if (mesh2.vertices.empty()) {
+        std::cerr << "Error loading mesh2." << std::endl;
         return 1;
     }
 
     // --- ESTIMATION PHASE ---
     timer.next("Selectivity Estimation");
+    
+    long long estimatedPairs = 0;
+
     if (mesh1.grid.hasGrid && mesh2.grid.hasGrid) {
         // Validation
         if (mesh1.grid.resolution.x != mesh2.grid.resolution.x ||
@@ -147,7 +187,7 @@ int main(int argc, char* argv[]) {
         
         int numCells = mesh1.grid.resolution.x * mesh1.grid.resolution.y * mesh1.grid.resolution.z;
         if (mesh1.grid.cells.size() == numCells && mesh2.grid.cells.size() == numCells) {
-            float estimatedPairs = estimateIntersectionSelectivity(
+            float estimatedPairsFloat = estimateIntersectionSelectivity(
                 mesh1.grid.cells.data(), 
                 mesh2.grid.cells.data(), 
                 numCells, 
@@ -156,13 +196,30 @@ int main(int argc, char* argv[]) {
                 gamma
             );
             
-            std::cout << "\n=== Selectivity Estimation ===" << std::endl;
-            std::cout << "Estimated Intersection Pairs: " << (long long)estimatedPairs << std::endl;
-            std::cout << "==============================\n" << std::endl;
+            // --- Normalization (Replication Correction) ---
+            // Calculate global average object sizes
+            float avgSize1 = calculateGlobalAvgSize(mesh1.grid.cells);
+            float avgSize2 = calculateGlobalAvgSize(mesh2.grid.cells);
             
-            if (estimateOnly) {
-                return 0;
-            }
+            // Calculate alpha: Volume of Minkowski Sum in grid cell units
+            // alpha = (S1 + S2)^3 / CellVolume
+            float combinedSize = avgSize1 + avgSize2;
+            float minkowskiVol = combinedSize * combinedSize * combinedSize;
+            
+            if (cellVolume < 1e-9f) cellVolume = 1e-9f;
+            
+            float alpha = minkowskiVol / cellVolume;
+            if (alpha < 1.0f) alpha = 1.0f; // Cannot be less than 1 cell
+            
+            estimatedPairs = (long long)(estimatedPairsFloat / alpha);
+
+            std::cout << "\n=== Selectivity Estimation ===" << std::endl;
+            std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
+            std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
+            std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
+            std::cout << "Replication Factor (alpha):" << alpha << std::endl;
+            std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+            std::cout << "==============================\n" << std::endl;
         } else {
              std::cerr << "Error: Grid has " << mesh1.grid.cells.size() << "/" << mesh2.grid.cells.size() 
                        << " cells, expected " << numCells << ". Skipping estimation." << std::endl;
@@ -172,27 +229,52 @@ int main(int argc, char* argv[]) {
         std::cout << "Run preprocess_dataset with --generate-grid to enable estimation." << std::endl;
     }
 
+    if (estimateOnly) {
+        timer.finish(outputJsonPath);
+        return 0;
+    }
+
+    // Calculate hash table size
+    int hash_table_size = 16777216;
+    if (estimatedPairs > 0) {
+        unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
+        if (target < 1024) target = 1024;
+        
+        // Cap to reasonable int size for hash table param
+        if (target > 1073741824ULL) target = 1073741824ULL;
+
+        hash_table_size = nextPow2((unsigned int)target);
+    }
+
+    std::cout << "\n=== Query Configuration ===" << std::endl;
+    std::cout << "Estimated Pairs:    " << estimatedPairs << std::endl;
+    std::cout << "Hash Table Size:    " << hash_table_size << " (Load Factor ~0.5)" << std::endl;
+    std::cout << "===========================\n" << std::endl;
+
     // --- EXECUTION PHASE ---
-    timer.next("Intersection Query");
+    timer.next("Init OptiX");
 
     // Create OptiX context and pipeline (reuse existing project patterns)
     OptixContext context;
     OptixPipelineManager basePipeline(context, ptxPath);
     MeshIntersectionLauncher intersectionLauncher(context, basePipeline);
 
-    timer.next("Upload Meshes and Build AS");
+    timer.next("Upload Mesh1");
 
     // Upload meshes using GeometryUploader
     GeometryUploader mesh1Uploader;
     mesh1Uploader.upload(mesh1);
 
+    timer.next("Upload Mesh2");
     GeometryUploader mesh2Uploader;
     mesh2Uploader.upload(mesh2);
 
     // Build acceleration structures
+    timer.next("Build Mesh1 Index");
     OptixAccelerationStructure mesh1AS(context, mesh1Uploader);
     mesh1AS.build();
 
+    timer.next("Build Mesh2 Index");
     OptixAccelerationStructure mesh2AS(context, mesh2Uploader);
     mesh2AS.build();
 
@@ -201,8 +283,7 @@ int main(int argc, char* argv[]) {
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
 
-    // Allocate Hash Table (16M items = 128MB)
-    int hash_table_size = 16777216;
+    // Allocate Hash Table
     unsigned long long* d_hash_table = nullptr;
     CUDA_CHECK(cudaMalloc(&d_hash_table, hash_table_size * sizeof(unsigned long long)));
 
@@ -254,6 +335,7 @@ int main(int argc, char* argv[]) {
     params1.object_tested = d_object_tested1;
     params2.object_tested = d_object_tested2;
 
+    timer.next("Query");
     std::cout << "Running Intersection Query..." << std::endl;
 
     QueryResults results = executeHashQuery(
@@ -265,6 +347,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Actual Intersection Pairs: " << results.numUnique << std::endl;
 
     // Cleanup
+    timer.next("Cleanup");
     CUDA_CHECK(cudaFree(d_hash_table));
     CUDA_CHECK(cudaFree(results.d_merged_results));
     CUDA_CHECK(cudaFree(d_object_tested1));

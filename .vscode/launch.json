@@ -32,8 +32,8 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/query/bin/Debug/raytracer_mesh_overlap.exe",
             "args": [
-                "--mesh1", "${workspaceFolder}/generated_files/cubes_1_geometry.txt",
-                "--mesh2", "${workspaceFolder}/generated_files/cubes_2_geometry.txt",
+                "--mesh1", "${workspaceFolder}/generated_files/test_cubes_1_geometry.txt",
+                "--mesh2", "${workspaceFolder}/generated_files/test_cubes_2_geometry.txt",
                 "--output", "${workspaceFolder}/generated_files/cubes_overlap_timing.json"
             ],
             "stopAtEntry": false,
