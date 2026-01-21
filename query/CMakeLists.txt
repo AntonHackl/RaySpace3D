@@ -103,12 +103,14 @@ set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DI
 set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
 set(MESH_OVERLAP_DEDUP_SOURCE ${CUDA_DIR}/mesh_overlap_deduplication.cu)
 set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
+set(ESTIMATED_INTERSECTION_SOURCE ${CUDA_DIR}/estimated_intersection.cu)
 
 # Application Sources
 set(RAYSPACE_MAIN_SOURCE ${SRC_DIR}/applications/rayspace_main.cpp)
 set(FILTER_REFINE_SOURCE ${SRC_DIR}/applications/rayspace_filter_refine_main.cpp)
 set(MESH_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_overlap_main.cpp)
 set(MESH_INTERSECTION_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_intersection_main.cpp)
+set(ESTIMATED_INTERSECTION_APP_SOURCE ${SRC_DIR}/applications/rayspace_intersection_estimated_main.cpp)
 
 # Modules
 set(OPTIX_DIR ${SRC_DIR}/optix)
@@ -197,6 +199,18 @@ add_executable(raytracer_mesh_intersection
     ${RESULT_COMPACTION_SOURCE} 
     ${MESH_OVERLAP_DEDUP_SOURCE} 
     ${SCAN_UTILS_SOURCE})
+
+add_executable(rayspace_intersection_estimated
+    ${ESTIMATED_INTERSECTION_APP_SOURCE}
+    ${RUNTIME_SOURCES}
+    ${TIMER_SOURCE}
+    ${OPTIX_SOURCES}
+    ${GEOMETRY_SOURCES}
+    ${RAYTRACING_SOURCES}
+    ${RESULT_COMPACTION_SOURCE}
+    ${MESH_OVERLAP_DEDUP_SOURCE}
+    ${SCAN_UTILS_SOURCE}
+    ${ESTIMATED_INTERSECTION_SOURCE})
 
 foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection)
     target_include_directories(${TARGET_NAME} PRIVATE 
@@ -292,4 +306,44 @@ add_custom_command(TARGET raytracer_mesh_intersection POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${MESH_INTERSECTION_PTX_FILE}"
     "$<TARGET_FILE_DIR:raytracer_mesh_intersection>/mesh_intersection${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying mesh_intersection.ptx...")
+
+# -----------------------------------------------------------------------
+# ESTIMATION Configuration
+# -----------------------------------------------------------------------
+
+target_include_directories(rayspace_intersection_estimated PRIVATE 
+    ${CUDA_INCLUDE_DIRS} 
+    ${OptiX_INCLUDE} 
+    ${SRC_DIR}
+    ${CUDA_DIR}
+    ${OPTIX_DIR}
+    ${GEOMETRY_DIR}
+    ${RAYTRACING_DIR}
+    ${SRC_DIR}/runtime
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include)
+
+target_link_libraries(rayspace_intersection_estimated PRIVATE 
+    rayspace3d_common
+    ${CUDA_LIBRARIES} 
+    CGAL::CGAL 
+    Boost::filesystem 
+    Boost::system)
+
+target_compile_definitions(rayspace_intersection_estimated PRIVATE INCLUDE_OPTIX)
+
+set_target_properties(rayspace_intersection_estimated PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+add_dependencies(rayspace_intersection_estimated copy_ptx)
+
+add_custom_command(TARGET rayspace_intersection_estimated POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${PTX_FILE}"
+    "$<TARGET_FILE_DIR:rayspace_intersection_estimated>/raytracing${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying raytracing.ptx...")
+
+add_custom_command(TARGET rayspace_intersection_estimated POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${MESH_INTERSECTION_PTX_FILE}"
+    "$<TARGET_FILE_DIR:rayspace_intersection_estimated>/mesh_intersection${OPTIX_MODULE_EXTENSION}"
     COMMENT "Copying mesh_intersection.ptx...")

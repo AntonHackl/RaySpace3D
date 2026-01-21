@@ -5,6 +5,7 @@
 // PinnedMemory.h includes cuda_runtime.h, which defines float3/uint3
 // So we must include it first to avoid redefinition conflicts
 #include "PinnedMemory.h"
+#include "GridCell.h"
 
 #ifdef INCLUDE_OPTIX
 #include <optix.h>
@@ -14,6 +15,14 @@
 // No need for custom float3/uint3 definitions anymore
 // They come from cuda_runtime.h via PinnedMemory.h
 
+struct GridData {
+    float3 minBound;
+    float3 maxBound;
+    uint3 resolution;
+    std::vector<GridCell> cells;
+    bool hasGrid = false;
+};
+
 struct GeometryData {
     // CPU-side data (std::vectors for flexibility)
     // Use PinnedAllocator to allow direct DMA transfer from these vectors
@@ -21,6 +30,9 @@ struct GeometryData {
     std::vector<uint3, PinnedAllocator<uint3>> indices;
     std::vector<int, PinnedAllocator<int>> triangleToObject;
     size_t totalTriangles = 0;
+    
+    // Grid statistics for selectivity estimation
+    GridData grid;
 };
 
 struct PointData {

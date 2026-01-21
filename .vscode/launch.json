@@ -2,14 +2,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Preprocess (Small DT)",
+            "name": "Preprocess",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/preprocess/bin/Debug/preprocess_dataset.exe",
             "args": [
-                "--dataset", "${workspaceFolder}/generated_files/test_small_n_nv15_nu30_vs100_r30.dt",
-                "--output-geometry", "${workspaceFolder}/generated_files/simple_test_geometry_n.txt",
-                "--output-timing", "${workspaceFolder}/generated_files/simple_test_preprocess_timing.json"
+                "--dataset", "${workspaceFolder}/generated_files/cubes_2.obj",
+                "--output-geometry", "${workspaceFolder}/generated_files/cubes_2_geometry.txt",
+                "--output-timing", "${workspaceFolder}/generated_files/cubes_2_preprocess_timing.json",
+                "--generate-grid",
+                "--grid-resolution", "10",
+                "--world-size", "50",
+                "--gamma", "1.0"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/generated_files",
@@ -23,14 +27,30 @@
             "preLaunchTask": "Build Preprocess"
         },
         {
-            "name": "Query: Overlap (Small DT)",
+            "name": "Query: Mesh Overlap",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/query/bin/Debug/raytracer_mesh_overlap.exe",
             "args": [
-                "--mesh1", "${workspaceFolder}/generated_files/simple_test_geometry_n.txt",
-                "--mesh2", "${workspaceFolder}/generated_files/simple_test_geometry_v.txt",
-                "--output", "${workspaceFolder}/generated_files/simple_test_overlap_timing.json"
+                "--mesh1", "${workspaceFolder}/generated_files/cubes_1_geometry.txt",
+                "--mesh2", "${workspaceFolder}/generated_files/cubes_2_geometry.txt",
+                "--output", "${workspaceFolder}/generated_files/cubes_overlap_timing.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/generated_files",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build Query"
+        },
+        {
+            "name": "Query: Intersection Hash Table",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/query/bin/Debug/rayspace_intersection_estimated.exe",
+            "args": [
+                "--mesh1", "${workspaceFolder}/generated_files/cubes_1_geometry.txt",
+                "--mesh2", "${workspaceFolder}/generated_files/cubes_2_geometry.txt",
+                "--output", "${workspaceFolder}/generated_files/cubes_1_cubes_2_overlap_timing.json"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/generated_files",

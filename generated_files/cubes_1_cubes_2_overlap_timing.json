@@ -1,0 +1,52 @@
+{
+  "phases": {
+    "load mesh1_1": {
+      "duration_us": 1989386,
+      "duration_ms": 1989.39
+    },
+    "load mesh2_1": {
+      "duration_us": 1823639,
+      "duration_ms": 1823.64
+    },
+    "selectivity estimation_1": {
+      "duration_us": 5972,
+      "duration_ms": 5.97
+    },
+    "init optix_1": {
+      "duration_us": 179198,
+      "duration_ms": 179.20
+    },
+    "upload mesh1_1": {
+      "duration_us": 659,
+      "duration_ms": 0.66
+    },
+    "upload mesh2_1": {
+      "duration_us": 624,
+      "duration_ms": 0.62
+    },
+    "build mesh1 index_1": {
+      "duration_us": 1813,
+      "duration_ms": 1.81
+    },
+    "build mesh2 index_1": {
+      "duration_us": 1302,
+      "duration_ms": 1.30
+    },
+    "prepare kernel parameters_1": {
+      "duration_us": 65103,
+      "duration_ms": 65.10
+    },
+    "query_1": {
+      "duration_us": 4971,
+      "duration_ms": 4.97
+    },
+    "cleanup_1": {
+      "duration_us": 820,
+      "duration_ms": 0.82
+    }
+  },
+  "total": {
+    "duration_us": 4073512,
+    "duration_ms": 4073.51
+  }
+}

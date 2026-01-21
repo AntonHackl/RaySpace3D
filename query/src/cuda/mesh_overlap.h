@@ -17,11 +17,6 @@ struct MeshOverlapLaunchParams {
     uint3* mesh2_indices;
     int* mesh2_triangle_to_object;
     
-    // Hash Table for on-the-fly deduplication
-    unsigned long long* hash_table;
-    int hash_table_size;
-    bool use_hash_table;
-    
     // Two-pass results
     int* collision_counts;      // Pass 1: per-triangle collision counts
     int* collision_offsets;     // Exclusive scan of counts (output positions)

@@ -20,20 +20,17 @@ std::unique_ptr<IDatasetLoader> DatasetLoaderFactory::create(DatasetType type) {
 }
 
 std::unique_ptr<IDatasetLoader> DatasetLoaderFactory::createFromPath(const std::string& path) {
-    std::error_code ec;
-    std::cout << "DEBUG: createFromPath called with: " << path << std::endl;
-    std::cout << "DEBUG: is_regular_file: " << std::filesystem::is_regular_file(path, ec) << std::endl;
-    std::cout << "DEBUG: extension: [" << std::filesystem::path(path).extension() << "]" << std::endl;
+    std::filesystem::path p(path);
+    std::string ext = p.extension().string();
     
-    if (std::filesystem::is_regular_file(path, ec)) {
-        if (std::filesystem::path(path).extension() == ".obj") {
-            std::cout << "DEBUG: Creating ObjMeshDatasetLoader" << std::endl;
-            return std::make_unique<ObjMeshDatasetLoader>();
-        } else if (std::filesystem::path(path).extension() == ".dt") {
-            std::cout << "DEBUG: Creating DtMeshDatasetLoader" << std::endl;
-            return std::make_unique<DtMeshDatasetLoader>();
-        }
+    // Convert to lowercase for robust extension matching
+    for (auto& c : ext) c = std::tolower(c);
+
+    if (ext == ".obj") {
+        return std::make_unique<ObjMeshDatasetLoader>();
+    } else if (ext == ".dt") {
+        return std::make_unique<DtMeshDatasetLoader>();
     }
-    std::cout << "DEBUG: Falling back to PolygonDatasetLoader" << std::endl;
+    
     return std::make_unique<PolygonDatasetLoader>();
 }

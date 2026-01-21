@@ -21,36 +21,6 @@ __device__ float3 normalize3f(const float3& v) {
     return make_float3(v.x / len, v.y / len, v.z / len);
 }
 
-__device__ void insert_hash_table(int id1, int id2) {
-    // Pack 2 integers into a 64-bit key
-    unsigned long long key = (static_cast<unsigned long long>(id1) << 32) | static_cast<unsigned long long>(id2);
-    
-    // Simple hash function to distribute keys
-    unsigned long long k = key;
-    k ^= k >> 33;
-    k *= 0xff51afd7ed558ccdULL;
-    k ^= k >> 33;
-    k *= 0xc4ceb9fe1a85ec53ULL;
-    k ^= k >> 33;
-    
-    int size = mesh_overlap_params.hash_table_size;
-    unsigned int h = k % size;
-    
-    // Linear probing with limit
-    for (int i = 0; i < 1000; ++i) {
-        // Attempt to insert key
-        unsigned long long old = atomicCAS(&mesh_overlap_params.hash_table[h], 0xFFFFFFFFFFFFFFFFULL, key);
-        
-        // Success if slot was empty or already contained our key (deduplication!)
-        if (old == 0xFFFFFFFFFFFFFFFFULL || old == key) {
-            return;
-        }
-        
-        // Collision with different key, probe next slot
-        h = (h + 1) % size;
-    }
-}
-
 extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
@@ -72,6 +42,8 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     float3 edgeEnds[3] = {v1, v2, v0};
     
     const float epsilon = 1e-6f;
+    int hits = 0;
+    int hitTriangleIndices[3];
     
     for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
         float3 edgeStart = edgeStarts[edgeIdx];
@@ -82,12 +54,12 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
                                      edgeEnd.z - edgeStart.z);
         float edgeLength = distance3f(edgeStart, edgeEnd);
         
-        // Use masking instead of early continue to reduce divergence
-        float lengthValid = (edgeLength >= epsilon) ? 1.0f : 0.0f;
+        if (edgeLength < epsilon) continue;
+        
         float3 normalizedDir = normalize3f(edgeDir);
         
         unsigned int hitFlag = 0;
-        unsigned int distance = __float_as_uint(edgeLength + epsilon);
+        unsigned int distance = 0;
         unsigned int triangleIndex = 0;
         
         optixTrace(
@@ -104,13 +76,19 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
             0,  // missSBTIndex
             hitFlag, distance, triangleIndex);
         
-        // Flatten nested conditions: check hitFlag AND length validity AND distance range
         float t = __uint_as_float(distance);
-        int validHit = hitFlag && (lengthValid > 0.0f) && (t >= epsilon) && (t <= edgeLength + epsilon);
-        
-        if (validHit) {
-            int objectIdMesh2 = mesh_overlap_params.mesh2_triangle_to_object[triangleIndex];
-            insert_hash_table(objectIdMesh1, objectIdMesh2);
+        if (hitFlag && t >= epsilon && t <= edgeLength + epsilon) {
+            hitTriangleIndices[hits++] = triangleIndex;
+        }
+    }
+    
+    if (mesh_overlap_params.pass == 1) {
+        mesh_overlap_params.collision_counts[triangleIdx] = hits;
+    } else if (mesh_overlap_params.pass == 2) {
+        int offset = mesh_overlap_params.collision_offsets[triangleIdx];
+        for (int i = 0; i < hits; ++i) {
+            int objectIdMesh2 = mesh_overlap_params.mesh2_triangle_to_object[hitTriangleIndices[i]];
+            mesh_overlap_params.results[offset + i] = {objectIdMesh1, objectIdMesh2};
         }
     }
 }
@@ -136,6 +114,8 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
     float3 edgeEnds[3] = {v1, v2, v0};
     
     const float epsilon = 1e-6f;
+    int hits = 0;
+    int hitTriangleIndices[3];
     
     for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
         float3 edgeStart = edgeStarts[edgeIdx];
@@ -146,12 +126,12 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
                                      edgeEnd.z - edgeStart.z);
         float edgeLength = distance3f(edgeStart, edgeEnd);
         
-        // Use masking instead of early continue to reduce divergence
-        float lengthValid = (edgeLength >= epsilon) ? 1.0f : 0.0f;
+        if (edgeLength < epsilon) continue;
+        
         float3 normalizedDir = normalize3f(edgeDir);
         
         unsigned int hitFlag = 0;
-        unsigned int distance = __float_as_uint(edgeLength + epsilon);
+        unsigned int distance = 0;
         unsigned int triangleIndex = 0;
         
         optixTrace(
@@ -168,13 +148,19 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
             0,  // missSBTIndex
             hitFlag, distance, triangleIndex);
         
-        // Flatten nested conditions: check hitFlag AND length validity AND distance range
         float t = __uint_as_float(distance);
-        int validHit = hitFlag && (lengthValid > 0.0f) && (t >= epsilon) && (t <= edgeLength + epsilon);
-        
-        if (validHit) {
-            int objectIdMesh1 = mesh_overlap_params.mesh2_triangle_to_object[triangleIndex];
-            insert_hash_table(objectIdMesh1, objectIdMesh2);
+        if (hitFlag && t >= epsilon && t <= edgeLength + epsilon) {
+            hitTriangleIndices[hits++] = triangleIndex;
+        }
+    }
+    
+    if (mesh_overlap_params.pass == 1) {
+        mesh_overlap_params.collision_counts[triangleIdx] = hits;
+    } else if (mesh_overlap_params.pass == 2) {
+        int offset = mesh_overlap_params.collision_offsets[triangleIdx];
+        for (int i = 0; i < hits; ++i) {
+            int objectIdMesh1 = mesh_overlap_params.mesh2_triangle_to_object[hitTriangleIndices[i]];
+            mesh_overlap_params.results[offset + i] = {objectIdMesh1, objectIdMesh2};
         }
     }
 }
@@ -196,4 +182,5 @@ extern "C" __global__ void __closesthit__ch()
     optixSetPayload_1(__float_as_uint(t));
     optixSetPayload_2(triangleIndex);
 }
+
 

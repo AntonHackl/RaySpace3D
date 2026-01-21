@@ -1,0 +1,28 @@
+{
+  "phases": {
+    "data reading_1": {
+      "duration_us": 5808209,
+      "duration_ms": 5808.21
+    },
+    "selectivity estimation_1": {
+      "duration_us": 286680,
+      "duration_ms": 286.68
+    },
+    "intersection query_1": {
+      "duration_us": 932320,
+      "duration_ms": 932.32
+    },
+    "upload meshes and build as_1": {
+      "duration_us": 6578,
+      "duration_ms": 6.58
+    },
+    "prepare kernel parameters_1": {
+      "duration_us": 36219,
+      "duration_ms": 36.22
+    }
+  },
+  "total": {
+    "duration_us": 7070010,
+    "duration_ms": 7070.01
+  }
+}

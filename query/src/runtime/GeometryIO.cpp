@@ -71,12 +71,51 @@ GeometryData loadGeometryFromFile(const std::string& geometryFilePath) {
         }
     }
 
+    // Optional Grid Data (appended by updated preprocessor)
+    // We check the next line. If EOF, it's fine.
+    if (std::getline(file, line)) {
+        if (line.rfind("grid_info:", 0) == 0) {
+            std::string grid_data = line.substr(10);
+            std::stringstream ss(grid_data);
+            float minx, miny, minz, maxx, maxy, maxz;
+            unsigned int resx, resy, resz;
+            ss >> minx >> miny >> minz >> maxx >> maxy >> maxz >> resx >> resy >> resz;
+            
+            geometry.grid.minBound = {minx, miny, minz};
+            geometry.grid.maxBound = {maxx, maxy, maxz};
+            geometry.grid.resolution = {resx, resy, resz};
+            geometry.grid.hasGrid = true;
+            
+             if (std::getline(file, line)) {
+                 if (line.rfind("grid_cells:", 0) == 0) {
+                     std::string cell_data = line.substr(11);
+                     std::stringstream ss2(cell_data);
+                     size_t numCells = (size_t)resx * resy * resz;
+                     geometry.grid.cells.reserve(numCells);
+                     
+                     uint32_t cc, tc;
+                     float avgSize, volRatio;
+                     while (ss2 >> cc >> tc >> avgSize >> volRatio) {
+                         geometry.grid.cells.push_back({cc, tc, avgSize, volRatio});
+                     }
+                     
+                     if (geometry.grid.cells.size() != numCells) {
+                          std::cerr << "Warning: Grid cell count mismatch. Expected " << numCells << ", got " << geometry.grid.cells.size() << std::endl;
+                     }
+                 }
+             }
+        }
+    }
+
     file.close();
 
     std::cout << "Loaded preprocessed geometry:" << std::endl;
     std::cout << "  Total vertices: " << geometry.vertices.size() << std::endl;
     std::cout << "  Total triangles: " << geometry.indices.size() << std::endl;
     std::cout << "  Triangle-to-object mappings: " << geometry.triangleToObject.size() << std::endl;
+    if (geometry.grid.hasGrid) {
+        std::cout << "  Grid Statistics Loaded (" << geometry.grid.resolution.x << "x" << geometry.grid.resolution.y << "x" << geometry.grid.resolution.z << ")" << std::endl;
+    }
 
     // Vectors are now pinned memory (via PinnedAllocator)
     // No need to copy to separate buffers or clear vectors.

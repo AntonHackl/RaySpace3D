@@ -44,10 +44,47 @@ make -j8
 
 **Usage:**
 ```bash
-./bin/preprocess_dataset <input_file> <output_file>
+# Standard preprocessing
+./bin/preprocess_dataset --dataset <input_file> --output-geometry <output_file>
+
+# Preprocessing with Grid Generation (for Selectivity Estimation)
+./bin/preprocess_dataset --dataset <input_file> --output-geometry <output_file> --generate-grid --grid-resolution 128 --world-size 1000.0
 ```
 
 ### 2. Query Tool
+
+This tool executes the queries using OptiX.
+
+**Create environment:**
+```bash
+cd query
+conda env create -f environment.yml
+conda activate rayspace3d_query
+```
+
+**Build:**
+```bash
+mkdir -p build && cd build
+cmake ..
+make -j8
+```
+
+**Usage (Standard Intersection):**
+```bash
+./bin/raytracer_mesh_intersection --mesh1 <mesh1.txt> --mesh2 <mesh2.txt>
+```
+
+**Usage (Estimated Intersection Selectivity):**
+```bash
+./bin/rayspace_intersection_estimated --mesh1 <mesh1.txt> --mesh2 <mesh2.txt>
+```
+This tool first prints the probabilistic selectivity estimation using the "Anchor & Probe" method, then executes the actual intersection join.
+
+**Arguments for Estimation:**
+- `--gamma <float>`: Shape correction factor (default 0.8).
+- `--epsilon <float>`: Epsilon for collision volume (default 0.001).
+- `--estimate-only`: Exit after estimation without running the full query.
+
 
 The query tool performs spatial intersection queries using OptiX ray tracing.
 

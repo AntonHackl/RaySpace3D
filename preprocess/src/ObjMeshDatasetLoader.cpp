@@ -6,6 +6,8 @@
 
 #include "Geometry.h"
 #include "DatasetUtils.h"
+
+#define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 #include <filesystem>
 
@@ -36,6 +38,10 @@ GeometryData ObjMeshDatasetLoader::load(const std::string& filePath) {
     std::string warn, err;
 
     bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filePath.c_str());
+
+    if (!warn.empty()) {
+        std::cout << "tinyobj::LoadObj warning: " << warn << std::endl;
+    }
 
     if (!err.empty()) {
         std::cerr << "Error loading .obj file: " << err << std::endl;
@@ -73,14 +79,24 @@ GeometryData ObjMeshDatasetLoader::load(const std::string& filePath) {
         size_t index_offset = 0;
         
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
-            int fv = shape.mesh.num_face_vertices[f];
+            int fv = int(shape.mesh.num_face_vertices[f]);
             if (fv != 3) {
                 allTriangular = false;
                 break;
             }
-            used_vertex_indices.insert(shape.mesh.indices[index_offset + 0].vertex_index);
-            used_vertex_indices.insert(shape.mesh.indices[index_offset + 1].vertex_index);
-            used_vertex_indices.insert(shape.mesh.indices[index_offset + 2].vertex_index);
+            if (index_offset + 2 >= shape.mesh.indices.size()) {
+                 std::cerr << "Error: index_offset out of bounds for shape " << shapeIdx << std::endl;
+                 allTriangular = false;
+                 break;
+            }
+            
+            tinyobj::index_t idx0 = shape.mesh.indices[index_offset + 0];
+            tinyobj::index_t idx1 = shape.mesh.indices[index_offset + 1];
+            tinyobj::index_t idx2 = shape.mesh.indices[index_offset + 2];
+
+            used_vertex_indices.insert(idx0.vertex_index);
+            used_vertex_indices.insert(idx1.vertex_index);
+            used_vertex_indices.insert(idx2.vertex_index);
             index_offset += fv;
         }
 
@@ -99,7 +115,12 @@ GeometryData ObjMeshDatasetLoader::load(const std::string& filePath) {
                 vertex.x = attrib.vertices[3 * global_vidx + 0];
                 vertex.y = attrib.vertices[3 * global_vidx + 1];
                 vertex.z = attrib.vertices[3 * global_vidx + 2];
-                geometry.vertices.push_back(vertex);
+                try {
+                    geometry.vertices.push_back(vertex);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: Exception during vertices.push_back: " << e.what() << std::endl;
+                    throw;
+                }
                 vertex_map[global_vidx] = vertexOffset + local_idx++;
             }
         }

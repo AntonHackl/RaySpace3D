@@ -1,0 +1,68 @@
+{
+  "phases": {
+    "data reading_1": {
+      "duration_us": 727,
+      "duration_ms": 0.73
+    },
+    "application creation_1": {
+      "duration_us": 640211,
+      "duration_ms": 640.21
+    },
+    "load mesh1_1": {
+      "duration_us": 1784696,
+      "duration_ms": 1784.70
+    },
+    "load mesh2_1": {
+      "duration_us": 1782174,
+      "duration_ms": 1782.17
+    },
+    "upload mesh1_1": {
+      "duration_us": 751,
+      "duration_ms": 0.75
+    },
+    "upload mesh2_1": {
+      "duration_us": 571,
+      "duration_ms": 0.57
+    },
+    "build mesh1 index_1": {
+      "duration_us": 5739,
+      "duration_ms": 5.74
+    },
+    "build mesh2 index_1": {
+      "duration_us": 1564,
+      "duration_ms": 1.56
+    },
+    "prepare kernel parameters_1": {
+      "duration_us": 4,
+      "duration_ms": 0.00
+    },
+    "warmup_1": {
+      "duration_us": 430312,
+      "duration_ms": 430.31
+    },
+    "query_1": {
+      "duration_us": 6079,
+      "duration_ms": 6.08
+    },
+    "gpu deduplication_1": {
+      "duration_us": 84,
+      "duration_ms": 0.08
+    },
+    "download results_1": {
+      "duration_us": 1945,
+      "duration_ms": 1.95
+    },
+    "output_1": {
+      "duration_us": 818068,
+      "duration_ms": 818.07
+    },
+    "cleanup_1": {
+      "duration_us": 337,
+      "duration_ms": 0.34
+    }
+  },
+  "total": {
+    "duration_us": 5473296,
+    "duration_ms": 5473.30
+  }
+}
