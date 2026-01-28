@@ -1,0 +1,20 @@
+{
+  "phases": {
+    "loading dataset_1": {
+      "duration_us": 1237019,
+      "duration_ms": 1237.02
+    },
+    "generating grid statistics_1": {
+      "duration_us": 11124,
+      "duration_ms": 11.12
+    },
+    "writing geometry data_1": {
+      "duration_us": 27346,
+      "duration_ms": 27.35
+    }
+  },
+  "total": {
+    "duration_us": 1275492,
+    "duration_ms": 1275.49
+  }
+}

@@ -14,64 +14,14 @@
 #include <sstream>
 // #include "Geometry.h"
 #include "../../common/include/Geometry.h"
+#include "../../common/include/BinaryIO.h"
 #include "DatasetLoaderFactory.h"
 #include "timer.h"
 
 void writeGeometryDataToFile(const GeometryData& geometry, const std::string& filename) {
-    std::ostringstream oss;
-    oss.setf(std::ios::fixed);
-    oss << std::setprecision(6);
-
-    oss << "vertices: ";
-    for (size_t i = 0; i < geometry.vertices.size(); ++i) {
-        const auto& v = geometry.vertices[i];
-        oss << v.x << ' ' << v.y << ' ' << v.z;
-        if (i + 1 < geometry.vertices.size()) oss << ' ';
+    if (RaySpace::IO::writeBinaryFile(filename, geometry)) {
+        std::cout << "Geometry data written to: " << filename << " (Binary)" << std::endl;
     }
-    oss << '\n';
-
-    oss << "indices: ";
-    for (size_t i = 0; i < geometry.indices.size(); ++i) {
-        const auto& tri = geometry.indices[i];
-        oss << tri.x << ' ' << tri.y << ' ' << tri.z;
-        if (i + 1 < geometry.indices.size()) oss << ' ';
-    }
-    oss << '\n';
-
-    oss << "triangleToObject: ";
-    for (size_t i = 0; i < geometry.triangleToObject.size(); ++i) {
-        oss << geometry.triangleToObject[i];
-        if (i + 1 < geometry.triangleToObject.size()) oss << ' ';
-    }
-    oss << '\n';
-
-    oss << "total_triangles: " << geometry.totalTriangles << '\n';
-
-    if (geometry.grid.hasGrid) {
-        oss << "grid_info: " 
-            << geometry.grid.minBound.x << ' ' << geometry.grid.minBound.y << ' ' << geometry.grid.minBound.z << ' '
-            << geometry.grid.maxBound.x << ' ' << geometry.grid.maxBound.y << ' ' << geometry.grid.maxBound.z << ' '
-            << geometry.grid.resolution.x << ' ' << geometry.grid.resolution.y << ' ' << geometry.grid.resolution.z << '\n';
-        
-        oss << "grid_cells: ";
-        for (size_t i = 0; i < geometry.grid.cells.size(); ++i) {
-            const auto& c = geometry.grid.cells[i];
-            oss << c.CenterCount << ' ' << c.TouchCount << ' ' << c.AvgSizeMean << ' ' << c.VolRatio;
-            if (i + 1 < geometry.grid.cells.size()) oss << ' ';
-        }
-        oss << '\n';
-    }
-
-    const std::string buffer = std::move(oss).str();
-    std::ofstream file(filename, std::ios::out | std::ios::binary);
-    if (!file) {
-        std::cerr << "Error: Could not open file for writing: " << filename << std::endl;
-        return;
-    }
-    file.write(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    file.close();
-
-    std::cout << "Geometry data written to: " << filename << std::endl;
 }
 
 #include <cmath>
