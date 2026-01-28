@@ -22,7 +22,7 @@ struct MeshIntersectionLaunchParams {
     // Hash Table for on-the-fly deduplication
     unsigned long long* hash_table;
     int hash_table_size;
-    bool use_hash_table;
+    int use_hash_table; // Use int instead of bool
     
     // Object tracking for containment checks
     unsigned char* object_tested;  // Track which objects had edge hits

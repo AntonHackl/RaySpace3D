@@ -230,6 +230,9 @@ int main(int argc, char* argv[]) {
     params1.mesh2_vertices = mesh2Uploader.getVertices();
     params1.mesh2_indices = mesh2Uploader.getIndices();
     params1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
+    params1.hash_table = nullptr;
+    params1.hash_table_size = 0;
+    params1.use_hash_table = false;
     params1.collision_counts = nullptr;
     params1.collision_offsets = nullptr;
     params1.results = nullptr; 
@@ -244,6 +247,9 @@ int main(int argc, char* argv[]) {
     params2.mesh2_vertices = mesh1Uploader.getVertices();
     params2.mesh2_indices = mesh1Uploader.getIndices();
     params2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
+    params2.hash_table = nullptr;
+    params2.hash_table_size = 0;
+    params2.use_hash_table = false;
     params2.collision_counts = nullptr;
     params2.collision_offsets = nullptr;
     params2.results = nullptr; 

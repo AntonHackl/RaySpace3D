@@ -34,6 +34,7 @@ __device__ void insert_hash_table(int id1, int id2) {
     k ^= k >> 33;
     
     int size = mesh_intersection_params.hash_table_size;
+    if (size <= 0) return;
     unsigned int h = k % size;
     
     // Linear probing with limit

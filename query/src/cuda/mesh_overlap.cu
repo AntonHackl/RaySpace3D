@@ -6,6 +6,37 @@
 
 extern "C" __constant__ MeshOverlapLaunchParams mesh_overlap_params;
 
+__device__ void insert_hash_table(int id1, int id2) {
+    // Pack 2 integers into a 64-bit key
+    unsigned long long key = (static_cast<unsigned long long>(id1) << 32) | static_cast<unsigned long long>(id2);
+    
+    // Simple hash function to distribute keys
+    unsigned long long k = key;
+    k ^= k >> 33;
+    k *= 0xff51afd7ed558ccdULL;
+    k ^= k >> 33;
+    k *= 0xc4ceb9fe1a85ec53ULL;
+    k ^= k >> 33;
+    
+    int size = mesh_overlap_params.hash_table_size;
+    if (size <= 0) return;
+    unsigned int h = k % size;
+    
+    // Linear probing with limit
+    for (int i = 0; i < 1000; ++i) {
+        // Attempt to insert key
+        unsigned long long old = atomicCAS(&mesh_overlap_params.hash_table[h], 0xFFFFFFFFFFFFFFFFULL, key);
+        
+        // Success if slot was empty or already contained our key (deduplication!)
+        if (old == 0xFFFFFFFFFFFFFFFFULL || old == key) {
+            return;
+        }
+        
+        // Collision with different key, probe next slot
+        h = (h + 1) % size;
+    }
+}
+
 __device__ float distance3f(const float3& a, const float3& b) {
     float dx = b.x - a.x;
     float dy = b.y - a.y;
@@ -82,13 +113,20 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
         }
     }
     
-    if (mesh_overlap_params.pass == 1) {
-        mesh_overlap_params.collision_counts[triangleIdx] = hits;
-    } else if (mesh_overlap_params.pass == 2) {
-        int offset = mesh_overlap_params.collision_offsets[triangleIdx];
+    if (mesh_overlap_params.use_hash_table) {
         for (int i = 0; i < hits; ++i) {
             int objectIdMesh2 = mesh_overlap_params.mesh2_triangle_to_object[hitTriangleIndices[i]];
-            mesh_overlap_params.results[offset + i] = {objectIdMesh1, objectIdMesh2};
+            insert_hash_table(objectIdMesh1, objectIdMesh2);
+        }
+    } else {
+        if (mesh_overlap_params.pass == 1) {
+            mesh_overlap_params.collision_counts[triangleIdx] = hits;
+        } else if (mesh_overlap_params.pass == 2) {
+            int offset = mesh_overlap_params.collision_offsets[triangleIdx];
+            for (int i = 0; i < hits; ++i) {
+                int objectIdMesh2 = mesh_overlap_params.mesh2_triangle_to_object[hitTriangleIndices[i]];
+                mesh_overlap_params.results[offset + i] = {objectIdMesh1, objectIdMesh2};
+            }
         }
     }
 }
@@ -154,13 +192,20 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
         }
     }
     
-    if (mesh_overlap_params.pass == 1) {
-        mesh_overlap_params.collision_counts[triangleIdx] = hits;
-    } else if (mesh_overlap_params.pass == 2) {
-        int offset = mesh_overlap_params.collision_offsets[triangleIdx];
+    if (mesh_overlap_params.use_hash_table) {
         for (int i = 0; i < hits; ++i) {
             int objectIdMesh1 = mesh_overlap_params.mesh2_triangle_to_object[hitTriangleIndices[i]];
-            mesh_overlap_params.results[offset + i] = {objectIdMesh1, objectIdMesh2};
+            insert_hash_table(objectIdMesh1, objectIdMesh2);
+        }
+    } else {
+        if (mesh_overlap_params.pass == 1) {
+            mesh_overlap_params.collision_counts[triangleIdx] = hits;
+        } else if (mesh_overlap_params.pass == 2) {
+            int offset = mesh_overlap_params.collision_offsets[triangleIdx];
+            for (int i = 0; i < hits; ++i) {
+                int objectIdMesh1 = mesh_overlap_params.mesh2_triangle_to_object[hitTriangleIndices[i]];
+                mesh_overlap_params.results[offset + i] = {objectIdMesh1, objectIdMesh2};
+            }
         }
     }
 }
