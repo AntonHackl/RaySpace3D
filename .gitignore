@@ -1,6 +1,7 @@
 build/
 /build.bat
 .cache
+*.pyc
 *.wkt
 *.csv
 *.html
@@ -10,6 +11,9 @@ build/
 *.jpg
 *.obj
 *.mtl
+*.pre
+*.dt
+*_timing.json
 results_*.json
 *preprocessed*.json
 grid_benchmark_*.json

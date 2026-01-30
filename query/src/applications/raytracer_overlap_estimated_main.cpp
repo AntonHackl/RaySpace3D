@@ -105,6 +105,22 @@ float calculateGlobalAvgSize(const std::vector<GridCell>& cells) {
     return (float)(totalSize / totalCount);
 }
 
+// Helper to calculate global average VolRatio from grid statistics
+float calculateGlobalAvgVolRatio(const std::vector<GridCell>& cells) {
+    double totalRatio = 0.0;
+    long long totalCount = 0;
+    
+    for (const auto& cell : cells) {
+        if (cell.TouchCount > 0) {
+            totalRatio += (double)cell.VolRatio * (double)cell.TouchCount;
+            totalCount += cell.TouchCount;
+        }
+    }
+    
+    if (totalCount == 0) return 1.0f;  // Default to 1.0 (no correction)
+    return (float)(totalRatio / totalCount);
+}
+
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
     
@@ -190,8 +206,15 @@ int main(int argc, char* argv[]) {
             
             float avgSize1 = calculateGlobalAvgSize(mesh1.grid.cells);
             float avgSize2 = calculateGlobalAvgSize(mesh2.grid.cells);
+            float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.cells);
+            float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.cells);
             
-            float combinedSize = avgSize1 + avgSize2;
+            // Scale sizes by cube root of VolRatio to get "effective" linear dimension
+            // For sparse/elongated objects, this reduces the effective size significantly
+            float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
+            float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
+            
+            float combinedSize = effectiveSize1 + effectiveSize2;
             float minkowskiVol = combinedSize * combinedSize * combinedSize;
             
             if (cellVolume < 1e-9f) cellVolume = 1e-9f;
@@ -205,6 +228,10 @@ int main(int argc, char* argv[]) {
             std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
             std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
             std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
+            std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
+            std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
+            std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
+            std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
             std::cout << "Replication Factor (alpha):" << alpha << std::endl;
             std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
             std::cout << "==============================\n" << std::endl;
@@ -279,11 +306,24 @@ int main(int argc, char* argv[]) {
     params2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
 
     timer.next("Execute Hash Query");
-    QueryResults results = executeHashQuery(overlapLauncher, params1, params2, mesh1NumTriangles, mesh2NumTriangles, d_hash_table, hash_table_size);
+    QueryResults queryResults = executeHashQuery(overlapLauncher, params1, params2, mesh1NumTriangles, mesh2NumTriangles, d_hash_table, hash_table_size);
 
     timer.next("Cleanup");
     CUDA_CHECK(cudaFree(d_hash_table));
-    if (results.d_merged_results) CUDA_CHECK(cudaFree(results.d_merged_results));
+    if (queryResults.d_merged_results) CUDA_CHECK(cudaFree(queryResults.d_merged_results));
+
+    // Count unique objects in each mesh
+    std::set<int> mesh1UniqueObjects(mesh1.triangleToObject.begin(), mesh1.triangleToObject.end());
+    int mesh1NumObjects = mesh1UniqueObjects.size();
+    std::set<int> mesh2UniqueObjects(mesh2.triangleToObject.begin(), mesh2.triangleToObject.end());
+    int mesh2NumObjects = mesh2UniqueObjects.size();
+
+    std::cout << "\n=== Mesh Overlap Join Summary ===" << std::endl;
+    std::cout << "Mesh1 triangles: " << mesh1NumTriangles << std::endl;
+    std::cout << "Mesh1 objects: " << mesh1NumObjects << std::endl;
+    std::cout << "Mesh2 triangles: " << mesh2NumTriangles << std::endl;
+    std::cout << "Mesh2 objects: " << mesh2NumObjects << std::endl;
+    std::cout << "Unique object pairs: " << queryResults.numUnique << std::endl;
 
     timer.finish(outputJsonPath);
     

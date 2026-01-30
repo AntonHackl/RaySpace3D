@@ -106,6 +106,22 @@ float calculateGlobalAvgSize(const std::vector<GridCell>& cells) {
     return (float)(totalSize / totalCount);
 }
 
+// Helper to calculate global average VolRatio from grid statistics
+float calculateGlobalAvgVolRatio(const std::vector<GridCell>& cells) {
+    double totalRatio = 0.0;
+    long long totalCount = 0;
+    
+    for (const auto& cell : cells) {
+        if (cell.TouchCount > 0) {
+            totalRatio += (double)cell.VolRatio * (double)cell.TouchCount;
+            totalCount += cell.TouchCount;
+        }
+    }
+    
+    if (totalCount == 0) return 1.0f;  // Default to 1.0 (no correction)
+    return (float)(totalRatio / totalCount);
+}
+
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
     
@@ -200,10 +216,17 @@ int main(int argc, char* argv[]) {
             // Calculate global average object sizes
             float avgSize1 = calculateGlobalAvgSize(mesh1.grid.cells);
             float avgSize2 = calculateGlobalAvgSize(mesh2.grid.cells);
+            float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.cells);
+            float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.cells);
+            
+            // Scale sizes by cube root of VolRatio to get "effective" linear dimension
+            // For sparse/elongated objects, this reduces the effective size significantly
+            float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
+            float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
             
             // Calculate alpha: Volume of Minkowski Sum in grid cell units
-            // alpha = (S1 + S2)^3 / CellVolume
-            float combinedSize = avgSize1 + avgSize2;
+            // Using effective sizes to account for object shapes
+            float combinedSize = effectiveSize1 + effectiveSize2;
             float minkowskiVol = combinedSize * combinedSize * combinedSize;
             
             if (cellVolume < 1e-9f) cellVolume = 1e-9f;
@@ -217,6 +240,10 @@ int main(int argc, char* argv[]) {
             std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
             std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
             std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
+            std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
+            std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
+            std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
+            std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
             std::cout << "Replication Factor (alpha):" << alpha << std::endl;
             std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
             std::cout << "==============================\n" << std::endl;

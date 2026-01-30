@@ -295,9 +295,17 @@ int main(int argc, char* argv[]) {
     
     timer.next("Output");
     
+    // Count unique objects in each mesh
+    std::set<int> mesh1UniqueObjects(mesh1Data.triangleToObject.begin(), mesh1Data.triangleToObject.end());
+    int mesh1NumObjects = mesh1UniqueObjects.size();
+    std::set<int> mesh2UniqueObjects(mesh2Data.triangleToObject.begin(), mesh2Data.triangleToObject.end());
+    int mesh2NumObjects = mesh2UniqueObjects.size();
+
     std::cout << "\n=== Mesh Overlap Join Summary ===" << std::endl;
     std::cout << "Mesh1 triangles: " << mesh1NumTriangles << std::endl;
+    std::cout << "Mesh1 objects: " << mesh1NumObjects << std::endl;
     std::cout << "Mesh2 triangles: " << mesh2NumTriangles << std::endl;
+    std::cout << "Mesh2 objects: " << mesh2NumObjects << std::endl;
     std::cout << "Unique object pairs: " << numUnique << std::endl;
     
     if (exportResults) {

@@ -94,11 +94,20 @@ $$ E_{raw} = \sum_{i=0}^{N} E_i $$
 ### 2. Normalization (Replication Correction)
 Because objects are counted in every cell they touch, a large object pair might be detected as intersecting in multiple cells. To correct for this overcounting, we divide by a replication factor $\alpha$.
 
-First, we calculate the global average object size for each dataset ($\bar{S}_A, \bar{S}_B$) by averaging the `AvgSizeMean` of all occupied cells. Then we compute:
-$$ \alpha = \max \left( \frac{(\bar{S}_A + \bar{S}_B)^3}{V_{cell}}, \quad 1.0 \right) $$
+First, we calculate the global average object size ($\bar{S}_A, \bar{S}_B$) and average volume ratio ($\bar{R}_A, \bar{R}_B$) for each dataset by averaging the `AvgSizeMean` and `VolRatio` of all occupied cells.
+
+**Shape-Corrected Effective Size**: To account for elongated or sparse objects (which touch many cells but don't fill them), we compute an "effective" linear dimension by scaling the average size by the cube root of the volume ratio:
+$$ S_{eff} = \bar{S} \times \sqrt[3]{\bar{R}_{vol}} $$
+
+For example, a vessel with VolRatio=0.037 will have its effective size reduced to about 33% of its AABB size.
+
+Then we compute:
+$$ \alpha = \max \left( \frac{(S_{eff,A} + S_{eff,B})^3}{V_{cell}}, \quad 1.0 \right) $$
 
 The final predicted number of unique intersecting pairs is:
 $$ E_{final} = \frac{E_{raw}}{\alpha} $$
+
+**Note**: This estimation is designed to **overestimate rather than underestimate** the number of pairs, which is safer for hash table sizing. Typical overestimation ratios are 2-5x for nuclei/vessel joins and higher for densely packed cubic objects.
 
 ## Application in Query Configuration
 
@@ -113,11 +122,11 @@ The final estimate $E_{final}$ is used to optimize the subsequent exact intersec
 1.  **Data Loading**: Loads geometry and pre-computed grid binary data.
 2.  **Kernel Launch**: `estimateKernel` computes raw per-cell potentials $E_i$ on the GPU.
 3.  **Reduction**: `thrust::reduce` sums per-cell values to produce $E_{raw}$.
-4.  **Global Analysis**: The CPU calculates global average sizes and the replication factor $\alpha$.
+4.  **Global Analysis**: The CPU calculates global average sizes, volume ratios, and the replication factor $\alpha$.
 5.  **Final Estimation**: $E_{final}$ is produced and used to allocate the deduplication hash table.
 6.  **Intersection Query**: (Optional) Performs the actual OptiX-based intersection tests using the optimized hash table.
 
 ## Parameters
 
-*   **`--gamma <float>`**: Controls the impact of the volume ratio shape correction. Higher values reduce the probability for sparse objects. Default: `0.8`.
+*   **`--gamma <float>`**: Controls the impact of the volume ratio shape correction in the per-cell probability. Higher values reduce the probability for sparse objects. Default: `0.8`.
 *   **`--epsilon <float>`**: A small bias added to the size calculation. Default: `0.001`.

@@ -302,43 +302,33 @@ set_target_properties(raytracer_overlap_estimated PROPERTIES RUNTIME_OUTPUT_DIRE
 set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
 set(MESH_OVERLAP_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}")
 set(MESH_INTERSECTION_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}")
-add_custom_target(copy_ptx DEPENDS ${PTX_FILES})
+
+# Copy PTX artifacts into the runtime bin directory whenever PTX outputs change.
+# Relying only on POST_BUILD copy commands is fragile because PTX can change
+# without requiring the executable to relink, leaving stale PTX next to the binary.
+set(RUNTIME_PTX_DIR "${CMAKE_BINARY_DIR}/bin")
+add_custom_target(copy_ptx ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${RUNTIME_PTX_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${PTX_FILE}"
+        "${RUNTIME_PTX_DIR}/raytracing${OPTIX_MODULE_EXTENSION}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MESH_OVERLAP_PTX_FILE}"
+        "${RUNTIME_PTX_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MESH_INTERSECTION_PTX_FILE}"
+        "${RUNTIME_PTX_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}"
+    DEPENDS ${PTX_FILES}
+    COMMENT "Copying PTX files to runtime bin directory..."
+)
 add_dependencies(raytracer copy_ptx)
 add_dependencies(raytracer_filter_refine copy_ptx)
 add_dependencies(raytracer_mesh_overlap copy_ptx)
 add_dependencies(raytracer_mesh_intersection copy_ptx)
 
-foreach(TARGET_NAME raytracer raytracer_filter_refine)
-    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${PTX_FILE}"
-        "$<TARGET_FILE_DIR:${TARGET_NAME}>/raytracing${OPTIX_MODULE_EXTENSION}"
-        COMMENT "Copying PTX file...")
+foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated)
+    add_dependencies(${TARGET_NAME} copy_ptx)
 endforeach()
-
-add_custom_command(TARGET raytracer_mesh_overlap POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${PTX_FILE}"
-    "$<TARGET_FILE_DIR:raytracer_mesh_overlap>/raytracing${OPTIX_MODULE_EXTENSION}"
-    COMMENT "Copying raytracing.ptx...")
-
-add_custom_command(TARGET raytracer_mesh_overlap POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${MESH_OVERLAP_PTX_FILE}"
-    "$<TARGET_FILE_DIR:raytracer_mesh_overlap>/mesh_overlap${OPTIX_MODULE_EXTENSION}"
-    COMMENT "Copying mesh_overlap.ptx...")
-
-add_custom_command(TARGET raytracer_mesh_intersection POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${PTX_FILE}"
-    "$<TARGET_FILE_DIR:raytracer_mesh_intersection>/raytracing${OPTIX_MODULE_EXTENSION}"
-    COMMENT "Copying raytracing.ptx...")
-
-add_custom_command(TARGET raytracer_mesh_intersection POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${MESH_INTERSECTION_PTX_FILE}"
-    "$<TARGET_FILE_DIR:raytracer_mesh_intersection>/mesh_intersection${OPTIX_MODULE_EXTENSION}"
-    COMMENT "Copying mesh_intersection.ptx...")
 
 # -----------------------------------------------------------------------
 # ESTIMATION Configuration
