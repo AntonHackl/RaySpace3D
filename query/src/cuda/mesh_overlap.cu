@@ -27,14 +27,16 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
     int& writeCursor,
     float epsilon
 ) {
-    // Iteratively trace the closest hit, then advance origin just beyond that hit.
-    // This discovers multiple intersections along a finite segment without needing
-    // any fixed-size local buffers.
-    const int kMaxIterations = 1000; // user-approved safety bound
-
+    // Multi-hit version with LOCAL deduplication per edge
+    // Use a fixed-size buffer to track unique objects hit by this edge
+    const int kMaxUniqueObjects = 64;  // Should be enough for most cases
+    int hitObjects[kMaxUniqueObjects];
+    int numUniqueObjects = 0;
+    
+    const int kMaxIterations = 100;  // Reduced from 1000 - most edges won't hit this many
     float3 origin = edgeStart;
     float traveled = 0.0f;
-    int hitCount = 0;
+    int totalTriangleHits = 0;
 
     for (int iter = 0; iter < kMaxIterations; ++iter) {
         const float remaining = edgeLength - traveled;
@@ -63,10 +65,41 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
         const float t = __uint_as_float(distance);
         if (!(t >= epsilon && t <= remaining + epsilon)) break;
 
-        ++hitCount;
+        ++totalTriangleHits;
 
+        // Get the object ID for this hit
+        const int objectIdTarget = mesh_overlap_params.mesh2_triangle_to_object[primitiveIndex];
+        
+        // Check if we've already seen this object on this edge
+        bool alreadySeen = false;
+        for (int i = 0; i < numUniqueObjects; ++i) {
+            if (hitObjects[i] == objectIdTarget) {
+                alreadySeen = true;
+                break;
+            }
+        }
+        
+        // Only add to our list if it's new and we have space
+        if (!alreadySeen && numUniqueObjects < kMaxUniqueObjects) {
+            hitObjects[numUniqueObjects++] = objectIdTarget;
+        }
+
+        // Advance origin to find next hit
+        // Use relative epsilon to handle floating point precision at different scales
+        const float scale = fmaxf(fabsf(origin.x), fmaxf(fabsf(origin.y), fabsf(origin.z)));
+        const float relativeEpsilon = epsilon * fmaxf(1.0f, scale);
+        const float advance = t + relativeEpsilon;
+        traveled += advance;
+        origin = add3f(origin, mul3f(dirNormalized, advance));
+
+        if (advance <= epsilon) break;
+    }
+
+    // Now insert all unique object pairs into hash table or results
+    for (int i = 0; i < numUniqueObjects; ++i) {
+        const int objectIdTarget = hitObjects[i];
+        
         if (mesh_overlap_params.use_hash_table) {
-            const int objectIdTarget = mesh_overlap_params.mesh2_triangle_to_object[primitiveIndex];
             if (swapPairOrder) {
                 insert_hash_table(objectIdTarget, objectIdSource);
             } else {
@@ -74,7 +107,6 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
             }
         } else {
             if (mesh_overlap_params.pass == 2) {
-                const int objectIdTarget = mesh_overlap_params.mesh2_triangle_to_object[primitiveIndex];
                 const int outIdx = writeCursor++;
                 if (swapPairOrder) {
                     mesh_overlap_params.results[outIdx] = {objectIdTarget, objectIdSource};
@@ -83,22 +115,11 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
                 }
             }
         }
-
-        // Advance origin forward so next trace finds the next closest hit.
-        // Use a small step to avoid re-hitting the same primitive due to precision.
-        const float advance = t + epsilon;
-        traveled += advance;
-        origin = add3f(origin, mul3f(dirNormalized, advance));
-
-        // Guard against numerical stagnation
-        if (advance <= epsilon) break;
     }
 
-    // In pass 2, ensure we wrote exactly within the triangle's range.
-    // (writeBaseOffset is unused here but kept to make call sites clearer)
     (void)triangleIdx;
     (void)writeBaseOffset;
-    return hitCount;
+    return numUniqueObjects;
 }
 
 __device__ void insert_hash_table(int id1, int id2) {
