@@ -8,13 +8,7 @@ extern "C" __constant__ MeshOverlapLaunchParams mesh_overlap_params;
 
 __device__ void insert_hash_table(int id1, int id2);
 
-static __forceinline__ __device__ float3 add3f(const float3& a, const float3& b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
 
-static __forceinline__ __device__ float3 mul3f(const float3& v, float s) {
-    return make_float3(v.x * s, v.y * s, v.z * s);
-}
 
 static __forceinline__ __device__ int trace_edge_multi_hits(
     const float3& edgeStart,
@@ -23,103 +17,57 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
     int objectIdSource,
     bool swapPairOrder,
     int triangleIdx,
-    int writeBaseOffset,
     int& writeCursor,
     float epsilon
 ) {
-    // Multi-hit version with LOCAL deduplication per edge
-    // Use a fixed-size buffer to track unique objects hit by this edge
-    const int kMaxUniqueObjects = 64;  // Should be enough for most cases
-    int hitObjects[kMaxUniqueObjects];
-    int numUniqueObjects = 0;
+    const int kMaxIterations = 100;
+    float current_t_min = epsilon;
+    int hitsFound = 0;
     
-    const int kMaxIterations = 100;  // Reduced from 1000 - most edges won't hit this many
-    float3 origin = edgeStart;
-    float traveled = 0.0f;
-    int totalTriangleHits = 0;
-
     for (int iter = 0; iter < kMaxIterations; ++iter) {
-        const float remaining = edgeLength - traveled;
-        if (remaining <= epsilon) break;
-
+        if (current_t_min > edgeLength + epsilon) break;
+        
         unsigned int hitFlag = 0;
         unsigned int distance = 0;
         unsigned int primitiveIndex = 0;
 
         optixTrace(
             mesh_overlap_params.mesh2_handle,
-            origin,
+            edgeStart,
             dirNormalized,
-            epsilon,
-            remaining + epsilon,
+            current_t_min,
+            edgeLength + epsilon,
             0.0f,
             OptixVisibilityMask(255),
-            OPTIX_RAY_FLAG_NONE,
-            0,  // SBT offset
-            1,  // SBT stride
-            0,  // missSBTIndex
+            OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+            0, 1, 0,
             hitFlag, distance, primitiveIndex);
 
         if (!hitFlag) break;
-
+        
         const float t = __uint_as_float(distance);
-        if (!(t >= epsilon && t <= remaining + epsilon)) break;
+        if (t > edgeLength + epsilon) break;
 
-        ++totalTriangleHits;
-
-        // Get the object ID for this hit
         const int objectIdTarget = mesh_overlap_params.mesh2_triangle_to_object[primitiveIndex];
-        
-        // Check if we've already seen this object on this edge
-        bool alreadySeen = false;
-        for (int i = 0; i < numUniqueObjects; ++i) {
-            if (hitObjects[i] == objectIdTarget) {
-                alreadySeen = true;
-                break;
-            }
-        }
-        
-        // Only add to our list if it's new and we have space
-        if (!alreadySeen && numUniqueObjects < kMaxUniqueObjects) {
-            hitObjects[numUniqueObjects++] = objectIdTarget;
-        }
-
-        // Advance origin to find next hit
-        // Use relative epsilon to handle floating point precision at different scales
-        const float scale = fmaxf(fabsf(origin.x), fmaxf(fabsf(origin.y), fabsf(origin.z)));
-        const float relativeEpsilon = epsilon * fmaxf(1.0f, scale);
-        const float advance = t + relativeEpsilon;
-        traveled += advance;
-        origin = add3f(origin, mul3f(dirNormalized, advance));
-
-        if (advance <= epsilon) break;
-    }
-
-    // Now insert all unique object pairs into hash table or results
-    for (int i = 0; i < numUniqueObjects; ++i) {
-        const int objectIdTarget = hitObjects[i];
+        hitsFound++;
         
         if (mesh_overlap_params.use_hash_table) {
-            if (swapPairOrder) {
-                insert_hash_table(objectIdTarget, objectIdSource);
-            } else {
-                insert_hash_table(objectIdSource, objectIdTarget);
-            }
-        } else {
-            if (mesh_overlap_params.pass == 2) {
-                const int outIdx = writeCursor++;
-                if (swapPairOrder) {
-                    mesh_overlap_params.results[outIdx] = {objectIdTarget, objectIdSource};
-                } else {
-                    mesh_overlap_params.results[outIdx] = {objectIdSource, objectIdTarget};
-                }
-            }
+            if (swapPairOrder) insert_hash_table(objectIdTarget, objectIdSource);
+            else insert_hash_table(objectIdSource, objectIdTarget);
+        } else if (mesh_overlap_params.pass == 2) {
+            const int outIdx = writeCursor++;
+            if (swapPairOrder) mesh_overlap_params.results[outIdx] = {objectIdTarget, objectIdSource};
+            else mesh_overlap_params.results[outIdx] = {objectIdSource, objectIdTarget};
         }
+        
+        float next_t_min = t + epsilon;
+        if (next_t_min <= t) {
+            next_t_min = t + 2e-4f;
+        }
+        current_t_min = next_t_min;
     }
 
-    (void)triangleIdx;
-    (void)writeBaseOffset;
-    return numUniqueObjects;
+    return hitsFound;
 }
 
 __device__ void insert_hash_table(int id1, int id2) {
@@ -148,7 +96,6 @@ __device__ void insert_hash_table(int id1, int id2) {
             return;
         }
         
-        // Collision with different key, probe next slot
         h = (h + 1) % size;
     }
 }
@@ -195,7 +142,6 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     if (!mesh_overlap_params.use_hash_table && mesh_overlap_params.pass == 2) {
         writeCursor = mesh_overlap_params.collision_offsets[triangleIdx];
     }
-    const int writeBaseOffset = writeCursor;
 
     for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
         const float3 edgeStart = edgeStarts[edgeIdx];
@@ -215,7 +161,6 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
             objectIdMesh1,
             false,
             triangleIdx,
-            writeBaseOffset,
             writeCursor,
             epsilon);
     }
@@ -254,7 +199,6 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
     if (!mesh_overlap_params.use_hash_table && mesh_overlap_params.pass == 2) {
         writeCursor = mesh_overlap_params.collision_offsets[triangleIdx];
     }
-    const int writeBaseOffset = writeCursor;
 
     for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
         const float3 edgeStart = edgeStarts[edgeIdx];
@@ -274,7 +218,6 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
             objectIdMesh2,
             true,
             triangleIdx,
-            writeBaseOffset,
             writeCursor,
             epsilon);
     }

@@ -10,6 +10,8 @@
 #include <sstream>
 #include <set>
 #include <algorithm>
+#include <map>
+#include <iomanip>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -25,6 +27,8 @@
 #include "../timer.h"
 #include "../ptx_utils.h"
 
+// Structure to hold query results
+// Structure to hold query results
 // Structure to hold query results
 // Structure to hold query results
 struct QueryResults {
@@ -323,10 +327,6 @@ int main(int argc, char* argv[]) {
     if (d_merged_results) CUDA_CHECK(cudaFree(d_merged_results));
     
     timer.finish(outputJsonPath);
-    
-    std::cout << std::endl;
-    std::cout << "Mesh overlap join completed successfully" << std::endl;
-    
     return 0;
 }
 
