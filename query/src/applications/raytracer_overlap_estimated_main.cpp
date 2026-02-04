@@ -42,6 +42,7 @@ QueryResults executeHashQuery(
     int mesh2NumTriangles,
     unsigned long long* d_hash_table,
     int hash_table_size,
+    long long estimated_pairs,
     bool verbose = true
 ) {
     // Clear hash table (set to 0xFF which is our sentinel for empty)
@@ -61,8 +62,19 @@ QueryResults executeHashQuery(
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
 
     // Compact results
-    int max_output = std::max(mesh1NumTriangles, mesh2NumTriangles) * 2; // Heuristic
-    if (max_output < 2000000) max_output = 2000000;
+    // Use estimated pairs to size the output buffer, with a fallback and a safety factor
+    long long safe_estimate = (estimated_pairs > 0) ? (long long)(estimated_pairs * 1.2) : (long long)hash_table_size;
+    // Ensure we don't allocate ridiculously small if estimate is off, utilize triangle count heuristic as floor
+    long long triangle_heuristic = (long long)std::max(mesh1NumTriangles, mesh2NumTriangles) * 2;
+    
+    long long max_output_long = std::max(safe_estimate, triangle_heuristic);
+    if (max_output_long < 2000000) max_output_long = 2000000;
+    
+    // Clamp to reasonable GPU memory limits if needed, but let's assume we have memory for now or let cudaMalloc fail
+    // (Optional: clamp to hash_table_size as theoretical max unique items)
+    if (max_output_long > hash_table_size) max_output_long = hash_table_size;
+    
+    int max_output = (int)max_output_long;
 
     MeshOverlapResult* d_merged_results = nullptr;
     CUDA_CHECK(cudaMalloc(&d_merged_results, max_output * sizeof(MeshOverlapResult)));
@@ -71,6 +83,9 @@ QueryResults executeHashQuery(
     
     if (verbose) {
          std::cout << "Hash Table Query found " << numUnique << " unique pairs." << std::endl;
+         if (numUnique >= max_output) {
+             std::cerr << "WARNING: Output buffer full! Results may be truncated. Max output: " << max_output << std::endl;
+         }
     }
     
     return {d_merged_results, numUnique};
@@ -135,6 +150,19 @@ int main(int argc, char* argv[]) {
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
+            if (arg == "--help" || arg == "-h") {
+                std::cout << "Usage: " << argv[0] << " --mesh1 <path> --mesh2 <path> [options]" << std::endl;
+                std::cout << "Options:" << std::endl;
+                std::cout << "  --mesh1 <path>         Path to first mesh dataset (geometry file)" << std::endl;
+                std::cout << "  --mesh2 <path>         Path to second mesh dataset (geometry file)" << std::endl;
+                std::cout << "  --output <path>        Path to JSON file for performance timing output (default: estimated_overlap_timing.json)" << std::endl;
+                std::cout << "  --ptx <ptx_file>       Path to compiled PTX file (default: auto-detect)" << std::endl;
+                std::cout << "  --gamma <float>        Gamma parameter for estimation (default: 0.8)" << std::endl;
+                std::cout << "  --epsilon <float>      Epsilon parameter for estimation (default: 0.001)" << std::endl;
+                std::cout << "  --estimate-only        Only run selectivity estimation, skip actual query" << std::endl;
+                std::cout << "  --help, -h             Show this help message" << std::endl;
+                return 0;
+            }
             if (arg == "--mesh1" && i + 1 < argc) {
                 mesh1Path = argv[++i];
             }
@@ -252,7 +280,7 @@ int main(int argc, char* argv[]) {
     if (estimatedPairs > 0) {
         unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
         if (target < 1024) target = 1024;
-        if (target > 1073741824ULL) target = 1073741824ULL;
+        // if (target > 1073741824ULL) target = 1073741824ULL;
         hash_table_size = nextPow2((unsigned int)target);
     }
 
@@ -306,7 +334,7 @@ int main(int argc, char* argv[]) {
     params2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
 
     timer.next("Execute Hash Query");
-    QueryResults queryResults = executeHashQuery(overlapLauncher, params1, params2, mesh1NumTriangles, mesh2NumTriangles, d_hash_table, hash_table_size);
+    QueryResults queryResults = executeHashQuery(overlapLauncher, params1, params2, mesh1NumTriangles, mesh2NumTriangles, d_hash_table, hash_table_size, estimatedPairs);
 
     timer.next("Cleanup");
     CUDA_CHECK(cudaFree(d_hash_table));
