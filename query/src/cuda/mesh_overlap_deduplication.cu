@@ -3,6 +3,7 @@
 #include <thrust/sort.h>
 #include <thrust/unique.h>
 #include <thrust/execution_policy.h>
+#include "../optix/OptixHelpers.h"
 
 // Convert pair to single 64-bit key for faster sorting
 __device__ __host__ inline unsigned long long pair_to_key(int id1, int id2) {
@@ -15,30 +16,29 @@ __device__ __host__ inline void key_to_pair(unsigned long long key, int& id1, in
 }
 
 // Kernel to convert pairs to keys
-__global__ void pairs_to_keys_kernel(const MeshOverlapResult* pairs, unsigned long long* keys, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void pairs_to_keys_kernel(const MeshOverlapResult* pairs, unsigned long long* keys, long long n) {
+    long long idx = blockIdx.x * (long long)blockDim.x + threadIdx.x;
     if (idx < n) {
         keys[idx] = pair_to_key(pairs[idx].object_id_mesh1, pairs[idx].object_id_mesh2);
     }
 }
 
 // Kernel to convert unique keys back to pairs
-__global__ void keys_to_pairs_kernel(const unsigned long long* keys, MeshOverlapResult* pairs, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void keys_to_pairs_kernel(const unsigned long long* keys, MeshOverlapResult* pairs, long long n) {
+    long long idx = blockIdx.x * (long long)blockDim.x + threadIdx.x;
     if (idx < n) {
         key_to_pair(keys[idx], pairs[idx].object_id_mesh1, pairs[idx].object_id_mesh2);
     }
-
 }
 
 __global__ void compact_hash_pairs_kernel(
     const unsigned long long* hash_table, 
-    int capacity, 
+    unsigned long long capacity, 
     MeshOverlapResult* output, 
     int* count_out, 
     int max_output_size) 
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    long long idx = blockIdx.x * (long long)blockDim.x + threadIdx.x;
     if (idx < capacity) {
         unsigned long long key = hash_table[idx];
         if (key != 0xFFFFFFFFFFFFFFFFULL) {
@@ -53,63 +53,78 @@ __global__ void compact_hash_pairs_kernel(
     }
 }
 
+// Sort+unique in-place with automatic batching for large datasets.
+// For normal datasets: single sort+unique (zero overhead).
+// For huge datasets: recursively splits in half until each chunk fits in GPU memory.
+static long long deduplicate_inplace(unsigned long long* d_keys, long long count) {
+    if (count <= 1) return count;
+    
+    // Check if we have enough free memory for thrust::sort temp buffer
+    size_t free_mem = 0, total_mem = 0;
+    cudaMemGetInfo(&free_mem, &total_mem);
+    
+    size_t data_bytes = (size_t)count * sizeof(unsigned long long);
+    // thrust::sort (radix sort) needs roughly 2x the data as temp workspace
+    size_t sort_needs = data_bytes * 2 + (512ULL << 20); // 2x data + 512MB headroom
+    
+    if (sort_needs <= free_mem) {
+        // Normal path: single sort+unique
+        thrust::device_ptr<unsigned long long> begin(d_keys);
+        thrust::device_ptr<unsigned long long> end = begin + count;
+        thrust::sort(thrust::device, begin, end);
+        thrust::device_ptr<unsigned long long> new_end = thrust::unique(thrust::device, begin, end);
+        return new_end - begin;
+    }
+    
+    // Batched path: split in half, deduplicate each, merge
+    long long half = count / 2;
+    
+    long long unique1 = deduplicate_inplace(d_keys, half);
+    long long unique2 = deduplicate_inplace(d_keys + half, count - half);
+    
+    // Compact: move unique2 right after unique1
+    if (unique2 > 0 && unique1 < half) {
+        CUDA_CHECK(cudaMemcpy(d_keys + unique1, d_keys + half, 
+                   (size_t)unique2 * sizeof(unsigned long long), cudaMemcpyDeviceToDevice));
+    }
+    
+    // Final sort+unique on the merged unique sets (much smaller than original)
+    return deduplicate_inplace(d_keys, unique1 + unique2);
+}
+
 extern "C" {
 
-int merge_and_deduplicate_gpu(
-    const MeshOverlapResult* d_results1, int num_results1,
-    const MeshOverlapResult* d_results2, int num_results2,
+long long merge_and_deduplicate_gpu(
+    const MeshOverlapResult* d_results1, long long num_results1,
+    const MeshOverlapResult* d_results2, long long num_results2,
     MeshOverlapResult* d_merged_output
 ) {
-    int total_results = num_results1 + num_results2;
+    long long total_results = num_results1 + num_results2;
     
     if (total_results == 0) {
         return 0;
     }
     
-    unsigned long long* d_keys;
-    cudaMalloc(&d_keys, total_results * sizeof(unsigned long long));
-    
-    int threads = 256;
-    int blocks = (total_results + threads - 1) / threads;
-    
-    // Step 1: Copy and convert both result arrays to keys
-    if (num_results1 > 0) {
-        cudaMemcpy(d_merged_output, d_results1, 
+    // Copy result arrays to merged output (if not already in place)
+    if (d_results1 != nullptr && num_results1 > 0) {
+        CUDA_CHECK(cudaMemcpy(d_merged_output, d_results1, 
                    num_results1 * sizeof(MeshOverlapResult), 
-                   cudaMemcpyDeviceToDevice);
+                   cudaMemcpyDeviceToDevice));
     }
-    if (num_results2 > 0) {
-        cudaMemcpy(d_merged_output + num_results1, d_results2, 
+    if (d_results2 != nullptr && num_results2 > 0) {
+        CUDA_CHECK(cudaMemcpy(d_merged_output + num_results1, d_results2, 
                    num_results2 * sizeof(MeshOverlapResult), 
-                   cudaMemcpyDeviceToDevice);
+                   cudaMemcpyDeviceToDevice));
     }
     
-    pairs_to_keys_kernel<<<blocks, threads>>>(d_merged_output, d_keys, total_results);
-    cudaDeviceSynchronize();
-    
-    // Step 2: Sort keys (much faster than sorting structs)
-    thrust::device_ptr<unsigned long long> key_begin(d_keys);
-    thrust::device_ptr<unsigned long long> key_end = key_begin + total_results;
-    thrust::sort(thrust::device, key_begin, key_end);
-    
-    // Step 3: Remove duplicate keys
-    thrust::device_ptr<unsigned long long> new_key_end = 
-        thrust::unique(thrust::device, key_begin, key_end);
-    
-    int num_unique = new_key_end - key_begin;
-    
-    // Step 4: Convert unique keys back to pairs
-    int unique_blocks = (num_unique + threads - 1) / threads;
-    keys_to_pairs_kernel<<<unique_blocks, threads>>>(d_keys, d_merged_output, num_unique);
-    cudaDeviceSynchronize();
-    
-    cudaFree(d_keys);
-    
-    return num_unique;
+    // Sort and unique in-place (auto-batches if needed)
+    unsigned long long* d_merged_keys = reinterpret_cast<unsigned long long*>(d_merged_output);
+    return deduplicate_inplace(d_merged_keys, total_results);
 }
 
+
 int compact_hash_table(
-    const unsigned long long* d_hash_table, int table_size,
+    const unsigned long long* d_hash_table, unsigned long long table_size,
     MeshOverlapResult* d_output, int max_output_size
 ) {
     int* d_count;

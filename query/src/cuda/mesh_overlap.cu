@@ -17,7 +17,7 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
     int objectIdSource,
     bool swapPairOrder,
     int triangleIdx,
-    int& writeCursor,
+    long long& writeCursor,
     float epsilon
 ) {
     const int kMaxIterations = 100;
@@ -55,7 +55,7 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
             if (swapPairOrder) insert_hash_table(objectIdTarget, objectIdSource);
             else insert_hash_table(objectIdSource, objectIdTarget);
         } else if (mesh_overlap_params.pass == 2) {
-            const int outIdx = writeCursor++;
+            const long long outIdx = writeCursor++;
             if (swapPairOrder) mesh_overlap_params.results[outIdx] = {objectIdTarget, objectIdSource};
             else mesh_overlap_params.results[outIdx] = {objectIdSource, objectIdTarget};
         }
@@ -82,7 +82,7 @@ __device__ void insert_hash_table(int id1, int id2) {
     k *= 0xc4ceb9fe1a85ec53ULL;
     k ^= k >> 33;
     
-    int size = mesh_overlap_params.hash_table_size;
+    unsigned long long size = mesh_overlap_params.hash_table_size;
     if (size <= 0) return;
     unsigned int h = k % size;
     
@@ -138,7 +138,7 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     const float epsilon = 1e-6f;
 
     int totalHits = 0;
-    int writeCursor = 0;
+    long long writeCursor = 0;
     if (!mesh_overlap_params.use_hash_table && mesh_overlap_params.pass == 2) {
         writeCursor = mesh_overlap_params.collision_offsets[triangleIdx];
     }
@@ -195,7 +195,7 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
     const float epsilon = 1e-6f;
 
     int totalHits = 0;
-    int writeCursor = 0;
+    long long writeCursor = 0;
     if (!mesh_overlap_params.use_hash_table && mesh_overlap_params.pass == 2) {
         writeCursor = mesh_overlap_params.collision_offsets[triangleIdx];
     }

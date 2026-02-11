@@ -41,7 +41,7 @@ QueryResults executeHashQuery(
     int mesh1NumTriangles,
     int mesh2NumTriangles,
     unsigned long long* d_hash_table,
-    int hash_table_size,
+    unsigned long long hash_table_size,
     long long estimated_pairs,
     bool verbose = true
 ) {
@@ -92,7 +92,7 @@ QueryResults executeHashQuery(
 }
 
 // Helper to calculate next power of 2
-unsigned int nextPow2(unsigned int v) {
+unsigned long long nextPow2(unsigned long long v) {
     if (v == 0) return 1;
     v--;
     v |= v >> 1;
@@ -100,6 +100,7 @@ unsigned int nextPow2(unsigned int v) {
     v |= v >> 4;
     v |= v >> 8;
     v |= v >> 16;
+    v |= v >> 32;
     v++;
     return v;
 }
@@ -276,12 +277,12 @@ int main(int argc, char* argv[]) {
     }
 
     // Calculate hash table size
-    int hash_table_size = 16777216;
+    unsigned long long hash_table_size = 16777216;
     if (estimatedPairs > 0) {
         unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
         if (target < 1024) target = 1024;
-        // if (target > 1073741824ULL) target = 1073741824ULL;
-        hash_table_size = nextPow2((unsigned int)target);
+        if (target > 1073741824ULL) target = 1073741824ULL;
+        hash_table_size = nextPow2(target);
     }
 
     // --- EXECUTION PHASE ---

@@ -33,7 +33,7 @@
 // Structure to hold query results
 struct QueryResults {
     MeshOverlapResult* d_merged_results;
-    int numUnique;
+    long long numUnique;
 };
 
 // Execute the overlap query using two-pass approach
@@ -48,8 +48,8 @@ QueryResults executeTwoPassQuery(
     // PASS 1: Count collisions
     int* d_collision_counts1 = nullptr;
     int* d_collision_counts2 = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_collision_counts1, mesh1NumTriangles * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_collision_counts2, mesh2NumTriangles * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_collision_counts1, (size_t)mesh1NumTriangles * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_collision_counts2, (size_t)mesh2NumTriangles * sizeof(int)));
     
     params1.collision_counts = d_collision_counts1;
     params1.pass = 1;
@@ -60,55 +60,55 @@ QueryResults executeTwoPassQuery(
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
     
     // Scan counts
-    int* d_collision_offsets1 = nullptr;
-    int* d_collision_offsets2 = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_collision_offsets1, mesh1NumTriangles * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_collision_offsets2, mesh2NumTriangles * sizeof(int)));
+    long long* d_collision_offsets1 = nullptr;
+    long long* d_collision_offsets2 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_collision_offsets1, (size_t)mesh1NumTriangles * sizeof(long long)));
+    CUDA_CHECK(cudaMalloc(&d_collision_offsets2, (size_t)mesh2NumTriangles * sizeof(long long)));
     
-    int total_results1 = exclusive_scan_gpu(d_collision_counts1, d_collision_offsets1, mesh1NumTriangles);
-    int total_results2 = exclusive_scan_gpu(d_collision_counts2, d_collision_offsets2, mesh2NumTriangles);
+    long long total_results1 = exclusive_scan_gpu(d_collision_counts1, d_collision_offsets1, mesh1NumTriangles);
+    long long total_results2 = exclusive_scan_gpu(d_collision_counts2, d_collision_offsets2, mesh2NumTriangles);
+    
+    // Free counts - no longer needed after scan
+    CUDA_CHECK(cudaFree(d_collision_counts1));
+    CUDA_CHECK(cudaFree(d_collision_counts2));
     
     if (verbose) {
         std::cout << "Pass 1: Found " << total_results1 << " + " << total_results2 
                   << " = " << (total_results1 + total_results2) << " potential overlaps." << std::endl;
     }
     
-    // PASS 2: Store results
-    MeshOverlapResult* d_results1 = nullptr;
-    MeshOverlapResult* d_results2 = nullptr;
-    if (total_results1 > 0) CUDA_CHECK(cudaMalloc(&d_results1, total_results1 * sizeof(MeshOverlapResult)));
-    if (total_results2 > 0) CUDA_CHECK(cudaMalloc(&d_results2, total_results2 * sizeof(MeshOverlapResult)));
+    // PASS 2: Store results into a single merged buffer
+    long long total_all = total_results1 + total_results2;
+    MeshOverlapResult* d_merged_results = nullptr;
+    if (total_all > 0) {
+        CUDA_CHECK(cudaMalloc(&d_merged_results, (size_t)total_all * sizeof(MeshOverlapResult)));
+    }
     
     params1.collision_offsets = d_collision_offsets1;
-    params1.results = d_results1;
+    params1.results = d_merged_results;
     params1.pass = 2;
     overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
     
+    // Mesh2 results go right after Mesh1 results in the same buffer
     params2.collision_offsets = d_collision_offsets2;
-    params2.results = d_results2;
+    params2.results = (d_merged_results ? d_merged_results + total_results1 : nullptr);
     params2.pass = 2;
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
     
-    // Merge and deduplicate
-    MeshOverlapResult* d_merged_results = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_merged_results, (total_results1 + total_results2) * sizeof(MeshOverlapResult)));
+    // Free offsets
+    CUDA_CHECK(cudaFree(d_collision_offsets1));
+    CUDA_CHECK(cudaFree(d_collision_offsets2));
     
-    int numUnique = merge_and_deduplicate_gpu(d_results1, total_results1, d_results2, total_results2, d_merged_results);
+    // Deduplicate (auto-batches if GPU memory is tight)
+    long long numUnique = merge_and_deduplicate_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
     
     if (verbose) {
         std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;
     }
     
-    // Cleanup internal buffers
-    if (d_results1) CUDA_CHECK(cudaFree(d_results1));
-    if (d_results2) CUDA_CHECK(cudaFree(d_results2));
-    CUDA_CHECK(cudaFree(d_collision_offsets1));
-    CUDA_CHECK(cudaFree(d_collision_offsets2));
-    CUDA_CHECK(cudaFree(d_collision_counts1));
-    CUDA_CHECK(cudaFree(d_collision_counts2));
-    
     return {d_merged_results, numUnique};
 }
+
 
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
@@ -282,7 +282,7 @@ int main(int argc, char* argv[]) {
     );
     
     MeshOverlapResult* d_merged_results = queryResults.d_merged_results;
-    int numUnique = queryResults.numUnique;
+    long long numUnique = queryResults.numUnique;
     
     timer.next("GPU Deduplication");
     // Already done by executeTwoPassQuery!
@@ -293,7 +293,7 @@ int main(int argc, char* argv[]) {
     std::vector<MeshOverlapResult> uniqueResults(numUnique);
     if (numUnique > 0) {
         CUDA_CHECK(cudaMemcpy(uniqueResults.data(), d_merged_results, 
-                              numUnique * sizeof(MeshOverlapResult), 
+                              (size_t)numUnique * sizeof(MeshOverlapResult), 
                               cudaMemcpyDeviceToHost));
     }
     
