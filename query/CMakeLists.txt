@@ -105,6 +105,7 @@ set(MESH_OVERLAP_DEDUP_SOURCE ${CUDA_DIR}/mesh_overlap_deduplication.cu)
 set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
 set(ESTIMATED_INTERSECTION_SOURCE ${CUDA_DIR}/estimated_intersection.cu)
 set(ESTIMATED_OVERLAP_SOURCE ${CUDA_DIR}/estimated_overlap.cu)
+set(MESH_CONTAINMENT_SOURCE ${CUDA_DIR}/mesh_containment.cu)
 
 # Application Sources
 set(RAYSPACE_MAIN_SOURCE ${SRC_DIR}/applications/rayspace_main.cpp)
@@ -113,6 +114,7 @@ set(MESH_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_overlap_main.c
 set(MESH_INTERSECTION_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_intersection_main.cpp)
 set(ESTIMATED_INTERSECTION_APP_SOURCE ${SRC_DIR}/applications/raytracer_intersection_estimated_main.cpp)
 set(ESTIMATED_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/raytracer_overlap_estimated_main.cpp)
+set(CONTAINMENT_APP_SOURCE ${SRC_DIR}/applications/raytracer_containment_main.cpp)
 
 # Modules
 set(OPTIX_DIR ${SRC_DIR}/optix)
@@ -133,7 +135,8 @@ set(RAYTRACING_SOURCES
     ${RAYTRACING_DIR}/ResultProcessor.cpp
     ${RAYTRACING_DIR}/FilterRefine.cpp
     ${RAYTRACING_DIR}/MeshOverlapLauncher.cpp
-    ${RAYTRACING_DIR}/MeshIntersectionLauncher.cpp)
+    ${RAYTRACING_DIR}/MeshIntersectionLauncher.cpp
+    ${RAYTRACING_DIR}/MeshContainmentLauncher.cpp)
 
 # Runtime sources
 set(RUNTIME_SOURCES
@@ -151,7 +154,7 @@ set(OPTIX_MODULE_EXTENSION ".ptx")
 set(OPTIX_PROGRAM_TARGET "--ptx")
 
 NVCUDA_COMPILE_MODULE(
-    SOURCES       ${CUDA_SOURCES}
+    SOURCES       ${CUDA_SOURCES} ${MESH_CONTAINMENT_SOURCE}
     TARGET_PATH   ${PTX_OUTPUT_DIR}
     EXTENSION     "${OPTIX_MODULE_EXTENSION}"
     GENERATED_FILES PTX_FILES
@@ -226,7 +229,18 @@ add_executable(raytracer_overlap_estimated
     ${SCAN_UTILS_SOURCE}
     ${ESTIMATED_OVERLAP_SOURCE})
 
-foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated)
+add_executable(raytracer_containment
+    ${CONTAINMENT_APP_SOURCE}
+    ${RUNTIME_SOURCES}
+    ${TIMER_SOURCE}
+    ${OPTIX_SOURCES}
+    ${GEOMETRY_SOURCES}
+    ${RAYTRACING_SOURCES}
+    ${RESULT_COMPACTION_SOURCE}
+    ${MESH_OVERLAP_DEDUP_SOURCE}
+    ${SCAN_UTILS_SOURCE})
+
+foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated raytracer_containment)
     target_include_directories(${TARGET_NAME} PRIVATE 
         ${CUDA_INCLUDE_DIRS} 
         ${OptiX_INCLUDE} 
@@ -281,12 +295,20 @@ target_link_libraries(raytracer_overlap_estimated PRIVATE
     Boost::filesystem 
     Boost::system)
 
+target_link_libraries(raytracer_containment PRIVATE 
+    rayspace3d_common
+    ${CUDA_LIBRARIES} 
+    CGAL::CGAL 
+    Boost::filesystem 
+    Boost::system)
+
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_filter_refine PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_mesh_overlap PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_mesh_intersection PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_intersection_estimated PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_overlap_estimated PRIVATE INCLUDE_OPTIX)
+target_compile_definitions(raytracer_containment PRIVATE INCLUDE_OPTIX)
 
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_filter_refine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -294,6 +316,7 @@ set_target_properties(raytracer_mesh_overlap PROPERTIES RUNTIME_OUTPUT_DIRECTORY
 set_target_properties(raytracer_mesh_intersection PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_intersection_estimated PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_overlap_estimated PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set_target_properties(raytracer_containment PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # -----------------------------------------------------------------------
 # Post-Build: Copy PTX
@@ -302,6 +325,7 @@ set_target_properties(raytracer_overlap_estimated PROPERTIES RUNTIME_OUTPUT_DIRE
 set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
 set(MESH_OVERLAP_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}")
 set(MESH_INTERSECTION_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}")
+set(MESH_CONTAINMENT_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_containment${OPTIX_MODULE_EXTENSION}")
 
 # Copy PTX artifacts into the runtime bin directory whenever PTX outputs change.
 # Relying only on POST_BUILD copy commands is fragile because PTX can change
@@ -318,6 +342,9 @@ add_custom_target(copy_ptx ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MESH_INTERSECTION_PTX_FILE}"
         "${RUNTIME_PTX_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MESH_CONTAINMENT_PTX_FILE}"
+        "${RUNTIME_PTX_DIR}/mesh_containment${OPTIX_MODULE_EXTENSION}"
     DEPENDS ${PTX_FILES}
     COMMENT "Copying PTX files to runtime bin directory..."
 )
@@ -326,7 +353,7 @@ add_dependencies(raytracer_filter_refine copy_ptx)
 add_dependencies(raytracer_mesh_overlap copy_ptx)
 add_dependencies(raytracer_mesh_intersection copy_ptx)
 
-foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated)
+foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated raytracer_containment)
     add_dependencies(${TARGET_NAME} copy_ptx)
 endforeach()
 
