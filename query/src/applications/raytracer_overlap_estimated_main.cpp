@@ -337,6 +337,15 @@ int main(int argc, char* argv[]) {
     timer.next("Execute Hash Query");
     QueryResults queryResults = executeHashQuery(overlapLauncher, params1, params2, mesh1NumTriangles, mesh2NumTriangles, d_hash_table, hash_table_size, estimatedPairs);
 
+    timer.next("Download Results");
+    std::vector<MeshOverlapResult> uniqueResults;
+    if (queryResults.numUnique > 0) {
+        uniqueResults.resize(queryResults.numUnique);
+        CUDA_CHECK(cudaMemcpy(uniqueResults.data(), queryResults.d_merged_results, 
+                              (size_t)queryResults.numUnique * sizeof(MeshOverlapResult), 
+                              cudaMemcpyDeviceToHost));
+    }
+
     timer.next("Cleanup");
     CUDA_CHECK(cudaFree(d_hash_table));
     if (queryResults.d_merged_results) CUDA_CHECK(cudaFree(queryResults.d_merged_results));
