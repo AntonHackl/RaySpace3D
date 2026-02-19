@@ -27,10 +27,6 @@
 #include "../timer.h"
 #include "../ptx_utils.h"
 
-// Structure to hold query results
-// Structure to hold query results
-// Structure to hold query results
-// Structure to hold query results
 struct QueryResults {
     MeshOverlapResult* d_merged_results;
     long long numUnique;
@@ -95,7 +91,6 @@ QueryResults executeTwoPassQuery(
     params2.pass = 2;
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
     
-    // Free offsets
     CUDA_CHECK(cudaFree(d_collision_offsets1));
     CUDA_CHECK(cudaFree(d_collision_offsets2));
     
@@ -299,7 +294,6 @@ int main(int argc, char* argv[]) {
     
     timer.next("Output");
     
-    // Count unique objects in each mesh
     std::set<int> mesh1UniqueObjects(mesh1Data.triangleToObject.begin(), mesh1Data.triangleToObject.end());
     int mesh1NumObjects = mesh1UniqueObjects.size();
     std::set<int> mesh2UniqueObjects(mesh2Data.triangleToObject.begin(), mesh2Data.triangleToObject.end());

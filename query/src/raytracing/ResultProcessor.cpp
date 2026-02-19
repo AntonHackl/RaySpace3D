@@ -12,25 +12,20 @@ std::vector<RayResult> ResultProcessor::compactAndDownload(RayResult* d_results,
         return hits;
     }
     
-    // Count hits on GPU
     int numHits = countHits(d_results, numResults);
     
     if (numHits > 0) {
         hits.resize(numHits);
         
-        // Allocate temporary GPU buffer for compacted results
         RayResult* d_compact = nullptr;
         CUDA_CHECK(cudaMalloc(&d_compact, numHits * sizeof(RayResult)));
         
-        // Compact on GPU
         int actual_hits = 0;
         compact_hits_gpu(d_results, d_compact, numResults, &actual_hits);
         
-        // Download compacted results
         CUDA_CHECK(cudaMemcpy(hits.data(), d_compact, actual_hits * sizeof(RayResult), cudaMemcpyDeviceToHost));
         CUDA_CHECK(cudaFree(d_compact));
         
-        // Resize if actual hits differ from count
         if (actual_hits != numHits) {
             hits.resize(actual_hits);
         }

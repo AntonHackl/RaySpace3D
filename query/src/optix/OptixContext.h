@@ -10,7 +10,6 @@ public:
     OptixContext();
     ~OptixContext();
     
-    // Disable copy construction and assignment
     OptixContext(const OptixContext&) = delete;
     OptixContext& operator=(const OptixContext&) = delete;
     

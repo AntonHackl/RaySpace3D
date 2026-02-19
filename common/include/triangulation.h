@@ -44,13 +44,11 @@ typedef CGAL::Triangulation_data_structure_2<Vb, Fb> TDS;
 typedef CGAL::Exact_predicates_tag Itag;
 typedef CGAL::Constrained_Delaunay_triangulation_2<K, TDS, Itag> CDT;
 
-// Simple point structure for interface compatibility
 struct Point2D {
     float x, y;
     Point2D(float x = 0.0f, float y = 0.0f) : x(x), y(y) {}
 };
 
-// Triangle structure
 struct Triangle {
     Point2D vertices[3];
     Triangle(const Point2D& v0, const Point2D& v1, const Point2D& v2) {
@@ -65,7 +63,6 @@ struct PolygonWithHoles {
     std::vector<std::vector<Point2D>> holes;
 };
 
-// Triangulation method statistics
 struct TriangulationStats {
     int cgal_success = 0;         // Method 0: CGAL successful
     int cgal_repaired = 0;        // Method 1: CGAL with polygon repair for self-intersecting
@@ -80,20 +77,15 @@ struct TriangulationStats {
     }
 };
 
-// Function to read polygon vertices from a WKT file
 std::vector<PolygonWithHoles> readPolygonVerticesFromFile(const std::string& filepath);
 
-// Function to triangulate a single polygon, returns triangles and method used (0=cgal, 1=repaired, 2=decomposed, 3=failed)
 std::pair<std::vector<Triangle>, int> triangulatePolygon(const PolygonWithHoles& polygon);
 
-// Helper functions for polygon repair
 std::vector<Polygon_with_holes_2> repairSelfIntersectingPolygon(const Polygon_2& polygon);
 std::vector<Polygon_2> decomposePolygonToSimple(const Polygon_2& polygon);
 
-// Function to count total triangles from triangulated polygons
 size_t countTriangles(const std::vector<std::vector<Triangle>>& triangulated_polygons);
 
-// Helper functions for CGAL triangulation
 void mark_domains(CDT& ct, CDT::Face_handle start, int index, std::list<CDT::Edge>& border);
 void mark_domains(CDT& cdt);
 Polygon_2 convertToPolygon2(const std::vector<Point2D>& points);

@@ -9,9 +9,6 @@ MeshOverlapLauncher::MeshOverlapLauncher(OptixContext& context, OptixPipelineMan
       raygenPG1_(nullptr), raygenPG2_(nullptr), missPG_(nullptr), hitPG_(nullptr),
       d_rg1_(0), d_rg2_(0), d_ms_(0), d_hg_(0), d_lp1_(0), d_lp2_(0) {
     
-    // Reuse the same PTX file (mesh_overlap.cu should be compiled into the same PTX)
-    // For now, we'll use the existing raytracing.ptx which should include mesh_overlap functions
-    // In a full implementation, mesh_overlap.cu would be compiled separately or included in raytracing.ptx
     createModule();
     createProgramGroups();
     createPipelines();
@@ -24,9 +21,7 @@ MeshOverlapLauncher::~MeshOverlapLauncher() {
 
 void MeshOverlapLauncher::createModule() {
     // Load mesh_overlap.ptx (compiled from mesh_overlap.cu)
-    // mesh_overlap.ptx contains the raygen programs and shaders
     std::string ptxPath = detectPTXPath();
-    // Replace "raytracing.ptx" with "mesh_overlap.ptx"
     size_t pos = ptxPath.find("raytracing.ptx");
     if (pos != std::string::npos) {
         ptxPath.replace(pos, std::string("raytracing.ptx").size(), "mesh_overlap.ptx");
@@ -92,7 +87,6 @@ void MeshOverlapLauncher::createProgramGroups() {
     raygenDesc2.raygen.entryFunctionName = "__raygen__mesh2_to_mesh1";
     OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &raygenDesc2, 1, &pgOptions, nullptr, nullptr, &raygenPG2_));
     
-    // Reuse miss and hit groups from base pipeline (they're the same)
     OptixProgramGroupDesc missDesc = {};
     missDesc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
     missDesc.miss.module = module_;

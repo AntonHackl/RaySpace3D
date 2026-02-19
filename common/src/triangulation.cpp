@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <list>
 
-// Helper function to mark domains in the triangulation
 void mark_domains(CDT& ct, CDT::Face_handle start, int index, std::list<CDT::Edge>& border) {
     if (start->info().nesting_level != -1) {
         return;
@@ -49,7 +48,6 @@ void mark_domains(CDT& cdt) {
     }
 }
 
-// Convert Point2D vector to CGAL Polygon_2
 Polygon_2 convertToPolygon2(const std::vector<Point2D>& points) {
     Polygon_2 polygon;
     for (const auto& pt : points) {
@@ -58,7 +56,6 @@ Polygon_2 convertToPolygon2(const std::vector<Point2D>& points) {
     return polygon;
 }
 
-// Extract triangles from CGAL triangulation
 std::vector<Triangle> extractTriangles(const CDT& cdt) {
     std::vector<Triangle> triangles;
     

@@ -29,7 +29,6 @@ struct GridParams {
     uint32_t padding; // Align
 };
 
-// Write geometry and grid data to a binary file
 inline bool writeBinaryFile(const std::string& filename, const GeometryData& geometry) {
     std::ofstream out(filename, std::ios::binary);
     if (!out) {
@@ -46,10 +45,8 @@ inline bool writeBinaryFile(const std::string& filename, const GeometryData& geo
     header.totalTriangles = geometry.totalTriangles;
     header.hasGrid = geometry.grid.hasGrid ? 1 : 0;
     
-    // Write Header
     out.write(reinterpret_cast<const char*>(&header), sizeof(FileHeader));
 
-    // Write Main Data Arrays
     if (header.numVertices > 0)
         out.write(reinterpret_cast<const char*>(geometry.vertices.data()), header.numVertices * sizeof(float3));
     
@@ -59,7 +56,6 @@ inline bool writeBinaryFile(const std::string& filename, const GeometryData& geo
     if (header.numMappings > 0)
         out.write(reinterpret_cast<const char*>(geometry.triangleToObject.data()), header.numMappings * sizeof(int));
 
-    // Write Grid Data if present
     if (header.hasGrid) {
         GridParams gp;
         gp.minBound[0] = geometry.grid.minBound.x;
@@ -79,7 +75,6 @@ inline bool writeBinaryFile(const std::string& filename, const GeometryData& geo
             std::cerr << "Warning: Grid cell count mismatch in write!" << std::endl;
         }
         
-        // Write cells directly
         if (numCells > 0)
             out.write(reinterpret_cast<const char*>(geometry.grid.cells.data()), numCells * sizeof(GridCell));
     }
@@ -88,7 +83,6 @@ inline bool writeBinaryFile(const std::string& filename, const GeometryData& geo
     return true;
 }
 
-// Read geometry and grid data from a binary file
 inline GeometryData readBinaryFile(const std::string& filename) {
     GeometryData geometry;
     std::ifstream in(filename, std::ios::binary);

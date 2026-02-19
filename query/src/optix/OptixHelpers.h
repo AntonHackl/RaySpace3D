@@ -12,7 +12,6 @@
 #include <vector>
 #include <iterator>
 
-// CUDA error checking macro
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
     if(err != cudaSuccess) { \
@@ -21,7 +20,6 @@
     } \
 } while(0)
 
-// OptiX error checking macro
 #define OPTIX_CHECK(call) do { \
     OptixResult res = call; \
     if(res != OPTIX_SUCCESS) { \
@@ -30,7 +28,6 @@
     } \
 } while(0)
 
-// Read PTX file into memory
 inline std::vector<char> readPTX(const char* filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) {

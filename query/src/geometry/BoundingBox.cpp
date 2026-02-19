@@ -14,7 +14,6 @@ BoundingBox::BoxMesh BoundingBox::createBoxMesh() const {
     mesh.vertices.reserve(8);
     mesh.indices.reserve(12);
     
-    // Create 8 vertices of the box
     float3 v0; v0.x = min.x; v0.y = min.y; v0.z = min.z; mesh.vertices.push_back(v0); // 0
     float3 v1; v1.x = max.x; v1.y = min.y; v1.z = min.z; mesh.vertices.push_back(v1); // 1
     float3 v2; v2.x = max.x; v2.y = max.y; v2.z = min.z; mesh.vertices.push_back(v2); // 2

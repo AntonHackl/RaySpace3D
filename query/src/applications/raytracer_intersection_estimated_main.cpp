@@ -27,7 +27,6 @@
 #include "../ptx_utils.h"
 #include "../cuda/estimated_intersection.h"
 
-// Structure to hold query results
 struct QueryResults {
     MeshOverlapResult* d_merged_results;
     int numUnique;
@@ -47,7 +46,6 @@ QueryResults executeHashQuery(
     // Clear hash table (set to 0xFF which is our sentinel for empty)
     CUDA_CHECK(cudaMemset(d_hash_table, 0xFF, hash_table_size * sizeof(unsigned long long)));
     
-    // Ensure params use hash table
     params1.use_hash_table = true;
     params1.hash_table = d_hash_table;
     params1.hash_table_size = hash_table_size;
@@ -56,11 +54,9 @@ QueryResults executeHashQuery(
     params2.hash_table = d_hash_table;
     params2.hash_table_size = hash_table_size;
 
-    // Launch kernels
     intersectionLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
     intersectionLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
 
-    // Compact results
     int max_output = std::max(mesh1NumTriangles, mesh2NumTriangles) * 2; // Heuristic
     if (max_output < 2000000) max_output = 2000000;
 
@@ -76,7 +72,6 @@ QueryResults executeHashQuery(
     return {d_merged_results, numUnique};
 }
 
-// Helper to calculate next power of 2
 unsigned int nextPow2(unsigned int v) {
     if (v == 0) return 1;
     v--;
@@ -213,7 +208,6 @@ int main(int argc, char* argv[]) {
             );
             
             // --- Normalization (Replication Correction) ---
-            // Calculate global average object sizes
             float avgSize1 = calculateGlobalAvgSize(mesh1.grid.cells);
             float avgSize2 = calculateGlobalAvgSize(mesh2.grid.cells);
             float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.cells);
@@ -261,7 +255,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Calculate hash table size
     int hash_table_size = 16777216;
     if (estimatedPairs > 0) {
         unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
@@ -288,7 +281,6 @@ int main(int argc, char* argv[]) {
 
     timer.next("Upload Mesh1");
 
-    // Upload meshes using GeometryUploader
     GeometryUploader mesh1Uploader;
     mesh1Uploader.upload(mesh1);
 
@@ -296,7 +288,6 @@ int main(int argc, char* argv[]) {
     GeometryUploader mesh2Uploader;
     mesh2Uploader.upload(mesh2);
 
-    // Build acceleration structures
     timer.next("Build Mesh1 Index");
     OptixAccelerationStructure mesh1AS(context, mesh1Uploader);
     mesh1AS.build();
@@ -373,7 +364,6 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Actual Intersection Pairs: " << results.numUnique << std::endl;
 
-    // Cleanup
     timer.next("Cleanup");
     CUDA_CHECK(cudaFree(d_hash_table));
     CUDA_CHECK(cudaFree(results.d_merged_results));

@@ -11,7 +11,6 @@ __global__ void count_hits_kernel(const RayResult* results, int num_results, int
     }
 }
 
-// Kernel to compact results - only copy hits to output array
 __global__ void compact_hits_kernel(const RayResult* input, RayResult* output, 
                                      int num_results, int* output_indices) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -25,7 +24,6 @@ __global__ void compact_hits_kernel(const RayResult* input, RayResult* output,
 
 extern "C" {
 
-// Host function to count hits on GPU
 int count_hits_gpu(const RayResult* d_results, int num_results) {
     int* d_hit_count;
     cudaMalloc(&d_hit_count, sizeof(int));
@@ -43,7 +41,6 @@ int count_hits_gpu(const RayResult* d_results, int num_results) {
     return h_hit_count;
 }
 
-// Host function to compact hits on GPU
 void compact_hits_gpu(const RayResult* d_input, RayResult* d_output, 
                       int num_results, int* h_num_hits) {
     int* d_output_idx;

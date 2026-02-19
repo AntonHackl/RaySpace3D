@@ -11,7 +11,6 @@ public:
     OptixAccelerationStructure(OptixContext& context, GeometryUploader& geometry);
     ~OptixAccelerationStructure();
     
-    // Disable copy construction and assignment
     OptixAccelerationStructure(const OptixAccelerationStructure&) = delete;
     OptixAccelerationStructure& operator=(const OptixAccelerationStructure&) = delete;
     

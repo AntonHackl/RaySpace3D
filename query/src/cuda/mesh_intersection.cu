@@ -22,10 +22,8 @@ __device__ float3 normalize3f(const float3& v) {
 }
 
 __device__ void insert_hash_table(int id1, int id2) {
-    // Pack 2 integers into a 64-bit key
     unsigned long long key = (static_cast<unsigned long long>(id1) << 32) | static_cast<unsigned long long>(id2);
     
-    // Simple hash function to distribute keys
     unsigned long long k = key;
     k ^= k >> 33;
     k *= 0xff51afd7ed558ccdULL;
@@ -37,9 +35,7 @@ __device__ void insert_hash_table(int id1, int id2) {
     if (size <= 0) return;
     unsigned int h = k % size;
     
-    // Linear probing with limit
     for (int i = 0; i < 1000; ++i) {
-        // Attempt to insert key
         unsigned long long old = atomicCAS(&mesh_intersection_params.hash_table[h], 0xFFFFFFFFFFFFFFFFULL, key);
         
         // Success if slot was empty or already contained our key (deduplication!)
@@ -47,12 +43,10 @@ __device__ void insert_hash_table(int id1, int id2) {
             return;
         }
         
-        // Collision with different key, probe next slot
         h = (h + 1) % size;
     }
 }
 
-// Mark that an object has been tested (had edge hits)
 __device__ void mark_object_tested(int objectId) {
     if (objectId >= 0 && objectId < mesh_intersection_params.mesh1_num_objects) {
         mesh_intersection_params.object_tested[objectId] = 1;
@@ -61,7 +55,6 @@ __device__ void mark_object_tested(int objectId) {
 
 // Check if a point is inside a mesh using ray casting (odd-even test)
 __device__ bool point_inside_mesh(const float3& point, OptixTraversableHandle mesh_handle) {
-    // Cast ray vertically upward
     float3 rayOrigin = point;
     float3 rayDir = make_float3(0.0f, 0.0f, 1.0f);
     
@@ -69,7 +62,6 @@ __device__ bool point_inside_mesh(const float3& point, OptixTraversableHandle me
     float tmin = 1e-4f;
     float tmax = 1e10f;
     
-    // Count all intersections along the ray
     for (int i = 0; i < 1000; ++i) {
         unsigned int hitFlag = 0;
         unsigned int distance = 0;
@@ -89,7 +81,6 @@ __device__ bool point_inside_mesh(const float3& point, OptixTraversableHandle me
             0,  // missSBTIndex
             hitFlag, distance, triangleIndex);
         
-        // Update hit count and tmin, break if no hit
         float t = __uint_as_float(distance);
         int continueLoop = hitFlag && (t < tmax);
         hitCount += hitFlag;
@@ -175,7 +166,6 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     // Containment fallback: if no edge hits found, test first vertex
     // Only test once per object (first triangle of that object)
     if (!edgeHitFound && triangleIdx == 0) {
-        // Check if v0 is inside mesh2
         if (point_inside_mesh(v0, mesh_intersection_params.mesh2_handle)) {
             // Object is fully contained - record intersection with all mesh2 objects
             // This is conservative but correct

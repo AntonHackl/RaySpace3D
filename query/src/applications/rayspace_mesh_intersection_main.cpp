@@ -25,7 +25,6 @@
 #include "../timer.h"
 #include "../ptx_utils.h"
 
-// Structure to hold query results
 struct QueryResults {
     MeshOverlapResult* d_merged_results;
     int numUnique;
@@ -163,7 +162,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh2 loaded: " << mesh2Data.vertices.size() << " vertices, " 
               << mesh2Data.indices.size() << " triangles" << std::endl;
     
-    // Count unique objects in each mesh
     std::set<int> mesh1Objects(mesh1Data.triangleToObject.begin(), mesh1Data.triangleToObject.end());
     std::set<int> mesh2Objects(mesh2Data.triangleToObject.begin(), mesh2Data.triangleToObject.end());
     int mesh1NumObjects = mesh1Objects.size();
@@ -201,7 +199,6 @@ int main(int argc, char* argv[]) {
     unsigned long long* d_hash_table = nullptr;
     CUDA_CHECK(cudaMalloc(&d_hash_table, hash_table_size * sizeof(unsigned long long)));
     
-    // Allocate object tracking buffers
     unsigned char* d_object_tested1 = nullptr;
     unsigned char* d_object_tested2 = nullptr;
     CUDA_CHECK(cudaMalloc(&d_object_tested1, mesh1NumObjects * sizeof(unsigned char)));

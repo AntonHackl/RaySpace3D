@@ -5,7 +5,6 @@
 #include <thrust/execution_policy.h>
 #include "../optix/OptixHelpers.h"
 
-// Convert pair to single 64-bit key for faster sorting
 __device__ __host__ inline unsigned long long pair_to_key(int id1, int id2) {
     return (static_cast<unsigned long long>(id1) << 32) | static_cast<unsigned long long>(id2);
 }
@@ -15,7 +14,6 @@ __device__ __host__ inline void key_to_pair(unsigned long long key, int& id1, in
     id2 = static_cast<int>(key & 0xFFFFFFFF);
 }
 
-// Kernel to convert pairs to keys
 __global__ void pairs_to_keys_kernel(const MeshOverlapResult* pairs, unsigned long long* keys, long long n) {
     long long idx = blockIdx.x * (long long)blockDim.x + threadIdx.x;
     if (idx < n) {
@@ -23,7 +21,6 @@ __global__ void pairs_to_keys_kernel(const MeshOverlapResult* pairs, unsigned lo
     }
 }
 
-// Kernel to convert unique keys back to pairs
 __global__ void keys_to_pairs_kernel(const unsigned long long* keys, MeshOverlapResult* pairs, long long n) {
     long long idx = blockIdx.x * (long long)blockDim.x + threadIdx.x;
     if (idx < n) {

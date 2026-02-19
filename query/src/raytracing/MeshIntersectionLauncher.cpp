@@ -22,7 +22,6 @@ MeshIntersectionLauncher::~MeshIntersectionLauncher() {
 void MeshIntersectionLauncher::createModule() {
     // Load mesh_intersection.ptx (compiled from mesh_intersection.cu)
     std::string ptxPath = detectPTXPath();
-    // Replace "raytracing.ptx" with "mesh_intersection.ptx"
     size_t pos = ptxPath.find("raytracing.ptx");
     if (pos != std::string::npos) {
         ptxPath.replace(pos, std::string("raytracing.ptx").size(), "mesh_intersection.ptx");

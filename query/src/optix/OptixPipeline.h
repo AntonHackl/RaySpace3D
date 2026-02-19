@@ -13,7 +13,6 @@ public:
     OptixPipelineManager(OptixContext& context, const std::string& ptxPath);
     ~OptixPipelineManager();
     
-    // Disable copy construction and assignment
     OptixPipelineManager(const OptixPipelineManager&) = delete;
     OptixPipelineManager& operator=(const OptixPipelineManager&) = delete;
     

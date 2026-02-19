@@ -23,7 +23,6 @@ struct BoundingBox {
         max.z = std::max(max.z, point.z);
     }
     
-    // Compute bounding box from geometry
     static BoundingBox computeFromGeometry(const GeometryData& geometry);
     
     // Create box mesh geometry (8 vertices, 12 triangles)

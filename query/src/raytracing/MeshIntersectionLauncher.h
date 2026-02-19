@@ -11,14 +11,11 @@ public:
     MeshIntersectionLauncher(OptixContext& context, OptixPipelineManager& basePipeline);
     ~MeshIntersectionLauncher();
     
-    // Disable copy construction and assignment
     MeshIntersectionLauncher(const MeshIntersectionLauncher&) = delete;
     MeshIntersectionLauncher& operator=(const MeshIntersectionLauncher&) = delete;
     
-    // Launch Mesh1 edges against Mesh2 acceleration structure
     void launchMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int numTriangles);
     
-    // Launch Mesh2 edges against Mesh1 acceleration structure
     void launchMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int numTriangles);
     
     bool isValid() const { return pipeline1_ != nullptr && pipeline2_ != nullptr; }

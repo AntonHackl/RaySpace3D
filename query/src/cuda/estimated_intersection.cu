@@ -20,7 +20,6 @@ __global__ void estimateKernel(
     GridCell A = gridA[idx];
     GridCell B = gridB[idx];
 
-    // Optimization: Skip empty space
     if (A.TouchCount == 0 || B.TouchCount == 0) {
         resultBuffer[idx] = 0.0f;
         return;
@@ -37,7 +36,7 @@ __global__ void estimateKernel(
     float shapeCorrection = powf(combinedRatio, gamma);
 
     prob *= shapeCorrection;
-    prob = fminf(prob, 1.0f); // Probability cannot be > 100%
+    prob = fminf(prob, 1.0f);
 
     // Calculate raw intersection potential (will be normalized by alpha globally)
     resultBuffer[idx] = (float)A.TouchCount * (float)B.TouchCount * prob;
@@ -69,7 +68,6 @@ float estimateIntersectionSelectivity(
     estimateKernel<<<numBlocks, blockSize>>>(d_gridA, d_gridB, d_result, numCells, cellVolume, epsilon, gamma);
     cudaDeviceSynchronize();
     
-    // Reduction using Thrust
     thrust::device_ptr<float> ptr(d_result);
     float total = thrust::reduce(ptr, ptr + numCells, 0.0f, thrust::plus<float>());
     

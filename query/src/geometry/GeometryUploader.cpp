@@ -27,7 +27,6 @@ void GeometryUploader::upload(const GeometryData& geometry) {
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_indices_), ibytes));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_triangle_to_object_), num_triangle_to_object_ * sizeof(int)));
     
-    // Use pinned memory vectors for faster DMA transfer
     CUDA_CHECK(cudaMemcpy(d_vertices_, geometry.vertices.data(), vbytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_indices_, geometry.indices.data(), ibytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_triangle_to_object_, geometry.triangleToObject.data(), 

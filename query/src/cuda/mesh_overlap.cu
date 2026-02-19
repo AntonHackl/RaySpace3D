@@ -71,10 +71,8 @@ static __forceinline__ __device__ int trace_edge_multi_hits(
 }
 
 __device__ void insert_hash_table(int id1, int id2) {
-    // Pack 2 integers into a 64-bit key
     unsigned long long key = (static_cast<unsigned long long>(id1) << 32) | static_cast<unsigned long long>(id2);
     
-    // Simple hash function to distribute keys
     unsigned long long k = key;
     k ^= k >> 33;
     k *= 0xff51afd7ed558ccdULL;
@@ -93,9 +91,7 @@ __device__ void insert_hash_table(int id1, int id2) {
         h = (unsigned int)(k % size);
     }
 
-    // Linear probing with limit
     for (int i = 0; i < 5000; ++i) {
-        // Attempt to insert key
         unsigned long long old = atomicCAS(&mesh_overlap_params.hash_table[h], 0xFFFFFFFFFFFFFFFFULL, key);
 
         // Success if slot was empty or already contained our key (deduplication!)
@@ -103,7 +99,6 @@ __device__ void insert_hash_table(int id1, int id2) {
             return;
         }
 
-        // Collision: advance to next slot
         if (mesh_overlap_params.use_bitwise_hash) {
             h = (h + 1) & (unsigned int)(size - 1);
         } else {

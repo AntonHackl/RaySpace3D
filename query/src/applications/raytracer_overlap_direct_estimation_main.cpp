@@ -27,7 +27,6 @@
 #include "../ptx_utils.h"
 #include "../cuda/estimated_overlap.h"
 
-// Structure to hold query results
 struct QueryResults {
     MeshOverlapResult* d_merged_results;
     int numUnique;
@@ -59,11 +58,9 @@ QueryResults executeHashQuery(
     params2.hash_table = d_hash_table;
     params2.hash_table_size = hash_table_size;
 
-    // Launch kernels
     overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
 
-    // Compact results
     // Use estimated pairs to size the output buffer, with a fallback and a safety factor
     long long safe_estimate = (estimated_pairs > 0) ? (long long)(estimated_pairs * 1.2) : (long long)hash_table_size;
     // Ensure we don't allocate ridiculously small if estimate is off, utilize triangle count heuristic as floor
@@ -347,7 +344,6 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_hash_table));
     if (queryResults.d_merged_results) CUDA_CHECK(cudaFree(queryResults.d_merged_results));
 
-    // Count unique objects in each mesh
     std::set<int> mesh1UniqueObjects(mesh1.triangleToObject.begin(), mesh1.triangleToObject.end());
     int mesh1NumObjects = mesh1UniqueObjects.size();
     std::set<int> mesh2UniqueObjects(mesh2.triangleToObject.begin(), mesh2.triangleToObject.end());

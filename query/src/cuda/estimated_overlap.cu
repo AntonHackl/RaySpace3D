@@ -20,7 +20,6 @@ __global__ void estimateOverlapKernel(
     GridCell A = gridA[idx];
     GridCell B = gridB[idx];
 
-    // Optimization: Skip empty space
     if (A.TouchCount == 0 || B.TouchCount == 0) {
         resultBuffer[idx] = 0.0f;
         return;
@@ -36,9 +35,8 @@ __global__ void estimateOverlapKernel(
     float shapeCorrection = powf(combinedRatio, gamma);
 
     prob *= shapeCorrection;
-    prob = fminf(prob, 1.0f); // Probability cannot be > 100%
+    prob = fminf(prob, 1.0f);
 
-    // Calculate raw overlap potential
     resultBuffer[idx] = (float)A.TouchCount * (float)B.TouchCount * prob;
 }
 
@@ -68,7 +66,6 @@ float estimateOverlapSelectivity(
     estimateOverlapKernel<<<numBlocks, blockSize>>>(d_gridA, d_gridB, d_result, numCells, cellVolume, epsilon, gamma);
     cudaDeviceSynchronize();
     
-    // Reduction using Thrust
     thrust::device_ptr<float> ptr(d_result);
     float total = thrust::reduce(ptr, ptr + numCells, 0.0f, thrust::plus<float>());
     

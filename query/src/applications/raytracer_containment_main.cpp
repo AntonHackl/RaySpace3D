@@ -160,13 +160,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Upload to GPU
     float3* d_bFirstVertices = nullptr;
     CUDA_CHECK(cudaMalloc(&d_bFirstVertices, numBObjects * sizeof(float3)));
     CUDA_CHECK(cudaMemcpy(d_bFirstVertices, bFirstVertices.data(),
                           numBObjects * sizeof(float3), cudaMemcpyHostToDevice));
 
-    // Allocate hash tables
     int intersectionHTSize  = 16777216;  // 16 M slots ≈ 128 MB
     int containmentHTSize   = 16777216;
 

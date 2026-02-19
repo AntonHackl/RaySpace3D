@@ -33,7 +33,6 @@ MeshContainmentLauncher::~MeshContainmentLauncher() {
 
 void MeshContainmentLauncher::createModule() {
     std::string ptxPath = detectPTXPath();
-    // Replace "raytracing.ptx" with "mesh_containment.ptx"
     size_t pos = ptxPath.find("raytracing.ptx");
     if (pos != std::string::npos) {
         ptxPath.replace(pos, std::string("raytracing.ptx").size(), "mesh_containment.ptx");

@@ -20,13 +20,11 @@
 #include "../timer.h"
 #include "../ptx_utils.h"
 
-// Helper function to split comma-separated file paths
 static std::vector<std::string> splitPaths(const std::string& input) {
     std::vector<std::string> result;
     std::stringstream ss(input);
     std::string item;
     while (std::getline(ss, item, ',')) {
-        // Trim whitespace
         size_t start = item.find_first_not_of(" \t");
         size_t end = item.find_last_not_of(" \t");
         if (start != std::string::npos && end != std::string::npos) {
@@ -50,7 +48,6 @@ int main(int argc, char* argv[]) {
     bool exportResults = true;
     int warmupRuns = 2;
     
-    // Parse command line arguments
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -91,7 +88,6 @@ int main(int argc, char* argv[]) {
     
     std::cout << "OptiX multiple rays example" << std::endl;
 
-    // Parse file lists
     std::vector<std::string> geometryFiles = splitPaths(geometryFilePath);
     std::vector<std::string> pointFiles = splitPaths(pointDatasetPath);
     
@@ -105,7 +101,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Validate list lengths
     size_t numTasks = std::max(geometryFiles.size(), pointFiles.size());
     if (geometryFiles.size() > 1 && pointFiles.size() > 1 && geometryFiles.size() != pointFiles.size()) {
         std::cerr << "Error: When both --geometry and --points are lists, they must have the same length." << std::endl;
@@ -116,7 +111,6 @@ int main(int argc, char* argv[]) {
     
     timer.next("Application Creation");
     
-    // Initialize OptiX
     OptixContext context;
     OptixPipelineManager pipeline(context, ptxPath);
     
@@ -194,7 +188,6 @@ int main(int argc, char* argv[]) {
         
         const int numRays = static_cast<int>(cachedPointData.numPoints);
         
-        // Warmup runs
         timer.next("Warmup");
         if (launcher && geometryAS) {
             launcher->runWarmup(*geometryAS, warmupRuns);
@@ -202,7 +195,6 @@ int main(int argc, char* argv[]) {
         
         timer.next("Query");
         
-        // Execute query
         if (numberOfRuns > 1) {
             std::cout << "\n=== Running " << numberOfRuns << " iterations for performance measurement ===" << std::endl;
             for (int run = 0; run < numberOfRuns; ++run) {
@@ -220,7 +212,6 @@ int main(int argc, char* argv[]) {
         
         timer.next("Download Results");
         
-        // Process results
         std::vector<RayResult> hits;
         if (launcher) {
             hits = resultProcessor.compactAndDownload(launcher->getResultBuffer(), numRays);
@@ -257,7 +248,6 @@ int main(int argc, char* argv[]) {
     
     cachedPointData.positions.clear(); cachedPointData.positions.shrink_to_fit();
     
-    // Cleanup
     if (launcher) delete launcher;
     if (geometryAS) delete geometryAS;
     

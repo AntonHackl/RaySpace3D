@@ -29,7 +29,6 @@ int main(int argc, char* argv[]) {
     bool exportResults = true;
     int warmupRuns = 2;
     
-    // Parse command line arguments
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -85,7 +84,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Load geometry
     std::cout << "Loading geometry from: " << geometryFilePath << std::endl;
     GeometryData geometry = loadGeometryFromFile(geometryFilePath);
     if (geometry.vertices.empty()) {
@@ -95,7 +93,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Geometry loaded: " << geometry.vertices.size() << " vertices, " 
               << geometry.indices.size() << " triangles" << std::endl;
     
-    // Load points
     std::cout << "Loading points from: " << pointDatasetPath << std::endl;
     PointData pointData = loadPointDataset(pointDatasetPath);
     if (pointData.numPoints == 0) {
@@ -106,12 +103,10 @@ int main(int argc, char* argv[]) {
     
     timer.next("Application Creation");
     
-    // Initialize OptiX
     OptixContext context;
     OptixPipelineManager pipeline(context, ptxPath);
     FilterRefinePipeline filterRefine(context, pipeline);
     
-    // Compute bounding box
     BoundingBox queryBBox = BoundingBox::computeFromGeometry(geometry);
     std::cout << "\nQuery bounding box computed:" << std::endl;
     std::cout << "  Min: (" << queryBBox.min.x << ", " << queryBBox.min.y << ", " << queryBBox.min.z << ")" << std::endl;
@@ -119,7 +114,6 @@ int main(int argc, char* argv[]) {
     
     timer.next("Filter-Refine Execution");
     
-    // Execute filter-refine pipeline
     FilterRefineResult result = filterRefine.execute(geometry, pointData);
     
     timer.next("Output");

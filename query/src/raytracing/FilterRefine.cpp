@@ -12,27 +12,21 @@ FilterRefineResult FilterRefinePipeline::executeFilter(const GeometryData& filte
     FilterRefineResult result;
     result.totalPoints = pointData.numPoints;
     
-    // Upload filter geometry
     GeometryUploader filterUploader;
     filterUploader.upload(filterGeometry);
     
-    // Build acceleration structure
     OptixAccelerationStructure filterAS(context_, filterUploader);
     filterAS.build();
     
-    // Upload points
     RayLauncher launcher(pipeline_, filterUploader);
     launcher.uploadRays(pointData.positions.data(), pointData.numPoints);
     
-    // Launch filter rays
     launcher.launch(filterAS, static_cast<int>(pointData.numPoints));
     
-    // Process results
     ResultProcessor processor;
     result.filterHits = processor.compactAndDownload(launcher.getResultBuffer(), 
                                                       static_cast<int>(pointData.numPoints));
     
-    // Extract candidate indices
     result.candidateIndices.reserve(result.filterHits.size());
     for (const auto& hit : result.filterHits) {
         result.candidateIndices.push_back(hit.ray_id);
@@ -61,27 +55,21 @@ FilterRefineResult FilterRefinePipeline::executeRefine(const GeometryData& refin
         return result;
     }
     
-    // Upload refine geometry
     GeometryUploader refineUploader;
     refineUploader.upload(refineGeometry);
     
-    // Build acceleration structure
     OptixAccelerationStructure refineAS(context_, refineUploader);
     refineAS.build();
     
-    // Upload candidate points
     RayLauncher launcher(pipeline_, refineUploader);
     launcher.uploadRays(candidatePoints);
     
-    // Launch refine rays
     launcher.launch(refineAS, static_cast<int>(candidatePoints.size()));
     
-    // Process results
     ResultProcessor processor;
     result.refineHits = processor.compactAndDownload(launcher.getResultBuffer(),
                                                       static_cast<int>(candidatePoints.size()));
     
-    // Map results back to original indices
     result.finalResults = processor.mapToOriginalIndices(result.refineHits, candidateIndices, totalPoints);
     
     result.insideCount = result.refineHits.size();
@@ -96,19 +84,13 @@ FilterRefineResult FilterRefinePipeline::execute(const GeometryData& queryGeomet
     BoundingBox bbox = BoundingBox::computeFromGeometry(queryGeometry);
     BoundingBox::BoxMesh boxMesh = bbox.createBoxMesh();
     
-    // Create filter geometry from bounding box
     GeometryData filterGeometry;
     filterGeometry.vertices.assign(boxMesh.vertices.begin(), boxMesh.vertices.end());
     filterGeometry.indices.assign(boxMesh.indices.begin(), boxMesh.indices.end());
     filterGeometry.triangleToObject.assign(boxMesh.triangleToObject.begin(), boxMesh.triangleToObject.end());
     filterGeometry.totalTriangles = boxMesh.indices.size();
     
-    // No need to explicitly allocate/copy pinnedBuffers, as the vectors above use PinnedAllocator
-    
-    // Execute filter phase
     FilterRefineResult filterResult = executeFilter(filterGeometry, pointData);
-    
-    // Cleanup filter geometry (vectors clear themselves)
     
     if (filterResult.candidateCount == 0) {
         // No candidates, all points filtered out
@@ -127,11 +109,9 @@ FilterRefineResult FilterRefinePipeline::execute(const GeometryData& queryGeomet
         }
     }
     
-    // Execute refine phase
     FilterRefineResult refineResult = executeRefine(queryGeometry, candidatePoints,
                                                      filterResult.candidateIndices, pointData.numPoints);
     
-    // Combine results
     FilterRefineResult result = filterResult;
     result.refineHits = refineResult.refineHits;
     result.finalResults = refineResult.finalResults;
