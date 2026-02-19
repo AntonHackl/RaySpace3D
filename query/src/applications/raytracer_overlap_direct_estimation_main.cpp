@@ -48,14 +48,14 @@ QueryResults executeHashQuery(
     // Clear hash table (set to 0xFF which is our sentinel for empty)
     CUDA_CHECK(cudaMemset(d_hash_table, 0xFF, hash_table_size * sizeof(unsigned long long)));
     
-    // Ensure params use hash table with bitwise optimisation (table size is power-of-two)
+    // Ensure params use hash table (no bitwise opt - table size is not power-of-two)
     params1.use_hash_table = true;
-    params1.use_bitwise_hash = true;
+    params1.use_bitwise_hash = false;
     params1.hash_table = d_hash_table;
     params1.hash_table_size = hash_table_size;
     
     params2.use_hash_table = true;
-    params2.use_bitwise_hash = true;
+    params2.use_bitwise_hash = false;
     params2.hash_table = d_hash_table;
     params2.hash_table_size = hash_table_size;
 
@@ -91,20 +91,6 @@ QueryResults executeHashQuery(
     }
     
     return {d_merged_results, numUnique};
-}
-
-// Helper to calculate next power of 2
-unsigned long long nextPow2(unsigned long long v) {
-    if (v == 0) return 1;
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    v |= v >> 32;
-    v++;
-    return v;
 }
 
 // Helper to calculate global average size of objects from grid statistics
@@ -255,7 +241,7 @@ int main(int argc, char* argv[]) {
             
             estimatedPairs = (long long)(estimatedPairsFloat / alpha);
 
-            std::cout << "\n=== Selectivity Estimation (Overlap) ===" << std::endl;
+            std::cout << "\n=== Selectivity Estimation (Overlap - Direct) ===" << std::endl;
             std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
             std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
             std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
@@ -281,13 +267,20 @@ int main(int argc, char* argv[]) {
     // Calculate hash table size
     unsigned long long hash_table_size = 16777216;
     if (estimatedPairs > 0) {
+        // Direct estimation: use estimated size / load factor directly (no nextPow2)
+        // Load factor roughly 0.5 to keep collisions low even with linear probing
         unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
         if (target < 1024) target = 1024;
-        if (target > 1073741824ULL) target = 1073741824ULL;
-        hash_table_size = nextPow2(target);
+        
+        // Ensure within sane limits for a single allocation
+        if (target > 2147483648ULL) target = 2147483648ULL; // Cap at 2GB items if needed, or higher
+        
+        hash_table_size = target;
+        // Make sure it's odd to avoid some stride issues with bad hashes (though our hash is mixed)
+        if (hash_table_size % 2 == 0) hash_table_size++;
     }
 
-    std::cout << "Using Power-of-Two Hash Table Size (bitwise opt): " << hash_table_size << std::endl;
+    std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
 
     // --- EXECUTION PHASE ---
     timer.next("Init OptiX");

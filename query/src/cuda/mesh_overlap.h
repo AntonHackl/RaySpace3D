@@ -21,6 +21,7 @@ struct MeshOverlapLaunchParams {
     unsigned long long* hash_table;
     unsigned long long hash_table_size;
     int use_hash_table;
+    int use_bitwise_hash; // Optimization for power-of-two sizes
     
     // Two-pass results
     int* collision_counts;      // Pass 1: per-triangle collision counts

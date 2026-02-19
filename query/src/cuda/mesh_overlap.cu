@@ -84,19 +84,31 @@ __device__ void insert_hash_table(int id1, int id2) {
     
     unsigned long long size = mesh_overlap_params.hash_table_size;
     if (size <= 0) return;
-    unsigned int h = k % size;
-    
+
+    // Use bitwise AND for power-of-two sizes (avoids expensive integer division on GPU)
+    unsigned int h;
+    if (mesh_overlap_params.use_bitwise_hash) {
+        h = (unsigned int)(k & (size - 1));
+    } else {
+        h = (unsigned int)(k % size);
+    }
+
     // Linear probing with limit
-    for (int i = 0; i < 1000; ++i) {
+    for (int i = 0; i < 5000; ++i) {
         // Attempt to insert key
         unsigned long long old = atomicCAS(&mesh_overlap_params.hash_table[h], 0xFFFFFFFFFFFFFFFFULL, key);
-        
+
         // Success if slot was empty or already contained our key (deduplication!)
         if (old == 0xFFFFFFFFFFFFFFFFULL || old == key) {
             return;
         }
-        
-        h = (h + 1) % size;
+
+        // Collision: advance to next slot
+        if (mesh_overlap_params.use_bitwise_hash) {
+            h = (h + 1) & (unsigned int)(size - 1);
+        } else {
+            h = (h + 1) % (unsigned int)size;
+        }
     }
 }
 
