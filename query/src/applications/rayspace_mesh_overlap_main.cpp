@@ -19,7 +19,7 @@
 #include "Geometry.h"
 #include "GeometryIO.h"
 #include "../cuda/mesh_overlap.h"
-#include "../cuda/mesh_overlap_deduplication.h"
+#include "../cuda/mesh_query_deduplication.h"
 #include "scan_utils.h"
 #include "common.h"
 #include "../optix/OptixHelpers.h"
@@ -28,7 +28,7 @@
 #include "../ptx_utils.h"
 
 struct QueryResults {
-    MeshOverlapResult* d_merged_results;
+    MeshQueryResult* d_merged_results;
     long long numUnique;
 };
 
@@ -75,9 +75,9 @@ QueryResults executeTwoPassQuery(
     
     // PASS 2: Store results into a single merged buffer
     long long total_all = total_results1 + total_results2;
-    MeshOverlapResult* d_merged_results = nullptr;
+    MeshQueryResult* d_merged_results = nullptr;
     if (total_all > 0) {
-        CUDA_CHECK(cudaMalloc(&d_merged_results, (size_t)total_all * sizeof(MeshOverlapResult)));
+        CUDA_CHECK(cudaMalloc(&d_merged_results, (size_t)total_all * sizeof(MeshQueryResult)));
     }
     
     params1.collision_offsets = d_collision_offsets1;
@@ -95,7 +95,7 @@ QueryResults executeTwoPassQuery(
     CUDA_CHECK(cudaFree(d_collision_offsets2));
     
     // Deduplicate (auto-batches if GPU memory is tight)
-    long long numUnique = merge_and_deduplicate_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
+    long long numUnique = merge_and_deduplicate_pairs_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
     
     if (verbose) {
         std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;
@@ -276,7 +276,7 @@ int main(int argc, char* argv[]) {
         true
     );
     
-    MeshOverlapResult* d_merged_results = queryResults.d_merged_results;
+    MeshQueryResult* d_merged_results = queryResults.d_merged_results;
     long long numUnique = queryResults.numUnique;
     
     timer.next("GPU Deduplication");
@@ -285,10 +285,10 @@ int main(int argc, char* argv[]) {
     
     timer.next("Download Results");
     
-    std::vector<MeshOverlapResult> uniqueResults(numUnique);
+    std::vector<MeshQueryResult> uniqueResults(numUnique);
     if (numUnique > 0) {
         CUDA_CHECK(cudaMemcpy(uniqueResults.data(), d_merged_results, 
-                              (size_t)numUnique * sizeof(MeshOverlapResult), 
+                              (size_t)numUnique * sizeof(MeshQueryResult), 
                               cudaMemcpyDeviceToHost));
     }
     

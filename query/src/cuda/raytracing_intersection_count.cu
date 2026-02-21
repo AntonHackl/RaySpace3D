@@ -2,6 +2,7 @@
 #include <optix.h>
 #include <cuda_runtime.h>
 #include "common.h"
+#include "optix_common_shaders.cuh"
 
 extern "C" __constant__ LaunchParams params;
 
@@ -69,23 +70,5 @@ extern "C" __global__ void __raygen__rg()
         params.result[ray_id].ray_id = ray_id;
         params.result[ray_id].polygon_index = -1;
     }
-}
-
-extern "C" __global__ void __miss__ms()
-{
-}
-
-extern "C" __global__ void __anyhit__ah()
-{
-}
-
-extern "C" __global__ void __closesthit__ch()
-{
-    const float t = optixGetRayTmax();
-    const unsigned int triangleIndex = optixGetPrimitiveIndex();
-    
-    optixSetPayload_0(1);
-    optixSetPayload_1(__float_as_uint(t));
-    optixSetPayload_2(triangleIndex);
 }
 

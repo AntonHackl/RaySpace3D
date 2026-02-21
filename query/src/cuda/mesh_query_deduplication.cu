@@ -1,4 +1,4 @@
-#include "mesh_overlap_deduplication.h"
+#include "mesh_query_deduplication.h"
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>

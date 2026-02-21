@@ -17,7 +17,7 @@
 #include "Geometry.h"
 #include "GeometryIO.h"
 #include "../cuda/mesh_containment.h"
-#include "../cuda/mesh_overlap_deduplication.h"
+#include "../cuda/mesh_query_deduplication.h"
 #include "scan_utils.h"
 #include "common.h"
 #include "../optix/OptixHelpers.h"
@@ -222,10 +222,10 @@ int main(int argc, char* argv[]) {
 
         // Compact results
         int maxOutput = 2000000;
-        MeshOverlapResult* d_results = nullptr;
-        CUDA_CHECK(cudaMalloc(&d_results, maxOutput * sizeof(MeshOverlapResult)));
+        MeshQueryResult* d_results = nullptr;
+        CUDA_CHECK(cudaMalloc(&d_results, maxOutput * sizeof(MeshQueryResult)));
 
-        int numContained = compact_hash_table(
+        int numContained = compact_hash_table_pairs(
             d_containmentHT, containmentHTSize, d_results, maxOutput);
 
         if (verbose) {
@@ -233,10 +233,10 @@ int main(int argc, char* argv[]) {
         }
 
         // Copy to host
-        std::vector<MeshOverlapResult> results(numContained);
+        std::vector<MeshQueryResult> results(numContained);
         if (numContained > 0) {
             CUDA_CHECK(cudaMemcpy(results.data(), d_results,
-                                  numContained * sizeof(MeshOverlapResult),
+                                  numContained * sizeof(MeshQueryResult),
                                   cudaMemcpyDeviceToHost));
         }
         CUDA_CHECK(cudaFree(d_results));
@@ -256,7 +256,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "\n=== Executing containment query ===" << std::endl;
 
-    std::vector<MeshOverlapResult> finalResults;
+    std::vector<MeshQueryResult> finalResults;
     for (int run = 0; run < numberOfRuns; ++run) {
         finalResults = runOnce(run == numberOfRuns - 1);
     }

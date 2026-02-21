@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include "../optix/OptixHelpers.h"
 #include <math.h>
+#include "optix_common_shaders.cuh"
 
 extern "C" __constant__ MeshContainmentLaunchParams containment_params;
 
@@ -226,17 +227,3 @@ extern "C" __global__ void __raygen__point_in_mesh() {
 // Miss / AnyHit / ClosestHit  (shared by all raygen programs)
 // -----------------------------------------------------------------------
 
-extern "C" __global__ void __miss__ms() {
-}
-
-extern "C" __global__ void __anyhit__ah() {
-}
-
-extern "C" __global__ void __closesthit__ch() {
-    const float t = optixGetRayTmax();
-    const unsigned int triangleIndex = optixGetPrimitiveIndex();
-
-    optixSetPayload_0(1);
-    optixSetPayload_1(__float_as_uint(t));
-    optixSetPayload_2(triangleIndex);
-}

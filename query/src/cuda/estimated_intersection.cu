@@ -5,7 +5,7 @@
 #include <thrust/functional.h>
 #include <cmath>
 
-__global__ void estimateKernel(
+__global__ void estimateSelectivityKernel(
     const GridCell* __restrict__ gridA,
     const GridCell* __restrict__ gridB,
     float* __restrict__ resultBuffer,
@@ -65,7 +65,7 @@ float estimateIntersectionSelectivity(
     int blockSize = 256;
     int numBlocks = (numCells + blockSize - 1) / blockSize;
     
-    estimateKernel<<<numBlocks, blockSize>>>(d_gridA, d_gridB, d_result, numCells, cellVolume, epsilon, gamma);
+    estimateSelectivityKernel<<<numBlocks, blockSize>>>(d_gridA, d_gridB, d_result, numCells, cellVolume, epsilon, gamma);
     cudaDeviceSynchronize();
     
     thrust::device_ptr<float> ptr(d_result);

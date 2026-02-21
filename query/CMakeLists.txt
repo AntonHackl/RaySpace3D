@@ -101,7 +101,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(CUDA_DIR ${SRC_DIR}/cuda)
 set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DIR}/mesh_intersection.cu)
 set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
-set(MESH_OVERLAP_DEDUP_SOURCE ${CUDA_DIR}/mesh_overlap_deduplication.cu)
+set(MESH_QUERY_DEDUP_SOURCE ${CUDA_DIR}/mesh_query_deduplication.cu)
 set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
 set(ESTIMATED_INTERSECTION_SOURCE ${CUDA_DIR}/estimated_intersection.cu)
 set(ESTIMATED_OVERLAP_SOURCE ${CUDA_DIR}/estimated_overlap.cu)
@@ -192,7 +192,7 @@ add_executable(raytracer_mesh_overlap
     ${GEOMETRY_SOURCES} 
     ${RAYTRACING_SOURCES} 
     ${RESULT_COMPACTION_SOURCE} 
-    ${MESH_OVERLAP_DEDUP_SOURCE} 
+    ${MESH_QUERY_DEDUP_SOURCE} 
     ${SCAN_UTILS_SOURCE})
 
 add_executable(raytracer_mesh_intersection 
@@ -203,7 +203,7 @@ add_executable(raytracer_mesh_intersection
     ${GEOMETRY_SOURCES} 
     ${RAYTRACING_SOURCES} 
     ${RESULT_COMPACTION_SOURCE} 
-    ${MESH_OVERLAP_DEDUP_SOURCE} 
+    ${MESH_QUERY_DEDUP_SOURCE} 
     ${SCAN_UTILS_SOURCE})
 
 add_executable(raytracer_intersection_estimated
@@ -214,7 +214,7 @@ add_executable(raytracer_intersection_estimated
     ${GEOMETRY_SOURCES}
     ${RAYTRACING_SOURCES}
     ${RESULT_COMPACTION_SOURCE}
-    ${MESH_OVERLAP_DEDUP_SOURCE}
+    ${MESH_QUERY_DEDUP_SOURCE}
     ${SCAN_UTILS_SOURCE}
     ${ESTIMATED_INTERSECTION_SOURCE})
 
@@ -226,7 +226,7 @@ add_executable(raytracer_overlap_estimated
     ${GEOMETRY_SOURCES}
     ${RAYTRACING_SOURCES}
     ${RESULT_COMPACTION_SOURCE}
-    ${MESH_OVERLAP_DEDUP_SOURCE}
+    ${MESH_QUERY_DEDUP_SOURCE}
     ${SCAN_UTILS_SOURCE}
     ${ESTIMATED_OVERLAP_SOURCE})
 
@@ -238,7 +238,7 @@ add_executable(raytracer_overlap_direct_estimation
     ${GEOMETRY_SOURCES}
     ${RAYTRACING_SOURCES}
     ${RESULT_COMPACTION_SOURCE}
-    ${MESH_OVERLAP_DEDUP_SOURCE}
+    ${MESH_QUERY_DEDUP_SOURCE}
     ${SCAN_UTILS_SOURCE}
     ${ESTIMATED_OVERLAP_SOURCE})
 
@@ -250,7 +250,7 @@ add_executable(raytracer_containment
     ${GEOMETRY_SOURCES}
     ${RAYTRACING_SOURCES}
     ${RESULT_COMPACTION_SOURCE}
-    ${MESH_OVERLAP_DEDUP_SOURCE}
+    ${MESH_QUERY_DEDUP_SOURCE}
     ${SCAN_UTILS_SOURCE})
 
 foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated raytracer_overlap_direct_estimation raytracer_containment)

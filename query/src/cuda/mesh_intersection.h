@@ -30,6 +30,6 @@ struct MeshIntersectionLaunchParams {
     // Two-pass results (legacy)
     int* collision_counts;
     long long* collision_offsets;
-    MeshOverlapResult* results;
+    MeshQueryResult* results;
     int pass;
 };

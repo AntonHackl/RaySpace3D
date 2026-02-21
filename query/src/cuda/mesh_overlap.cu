@@ -193,7 +193,7 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
     float3 v2 = mesh_overlap_params.mesh1_vertices[triIndices.z];
     
     // Note: in this raygen we iterate triangles of Mesh2 (uploaded as mesh1_*) against Mesh1 GAS.
-    // To keep MeshOverlapResult ordering consistent as (mesh1_id, mesh2_id), we swap pair order on write.
+    // To keep MeshQueryResult ordering consistent as (mesh1_id, mesh2_id), we swap pair order on write.
     int objectIdMesh2 = mesh_overlap_params.mesh1_triangle_to_object[triangleIdx];
     
     float3 edgeStarts[3] = {v0, v1, v2};
@@ -234,22 +234,5 @@ extern "C" __global__ void __raygen__mesh2_to_mesh1() {
     }
 }
 
-extern "C" __global__ void __miss__ms()
-{
-}
-
-extern "C" __global__ void __anyhit__ah()
-{
-}
-
-extern "C" __global__ void __closesthit__ch()
-{
-    const float t = optixGetRayTmax();
-    const unsigned int triangleIndex = optixGetPrimitiveIndex();
-    
-    optixSetPayload_0(1);
-    optixSetPayload_1(__float_as_uint(t));
-    optixSetPayload_2(triangleIndex);
-}
 
 

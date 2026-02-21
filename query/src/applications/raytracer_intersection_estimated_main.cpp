@@ -18,7 +18,7 @@
 #include "Geometry.h"
 #include "GeometryIO.h"
 #include "../cuda/mesh_intersection.h"
-#include "../cuda/mesh_overlap_deduplication.h"
+#include "../cuda/mesh_query_deduplication.h"
 #include "scan_utils.h"
 #include "common.h"
 #include "../optix/OptixHelpers.h"
@@ -28,7 +28,7 @@
 #include "../cuda/estimated_intersection.h"
 
 struct QueryResults {
-    MeshOverlapResult* d_merged_results;
+    MeshQueryResult* d_merged_results;
     int numUnique;
 };
 
@@ -59,10 +59,10 @@ QueryResults executeHashQuery(
 
     int max_output = hash_table_size; 
 
-    MeshOverlapResult* d_merged_results = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_merged_results, max_output * sizeof(MeshOverlapResult)));
+    MeshQueryResult* d_merged_results = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_merged_results, max_output * sizeof(MeshQueryResult)));
     
-    int numUnique = compact_hash_table(d_hash_table, hash_table_size, d_merged_results, max_output);
+    int numUnique = compact_hash_table_pairs(d_hash_table, hash_table_size, d_merged_results, max_output);
     
     if (verbose) {
          std::cout << "Hash Table Query found " << numUnique << " unique pairs." << std::endl;
