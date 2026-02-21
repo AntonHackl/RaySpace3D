@@ -30,45 +30,77 @@ struct QueryResults {
     int numUnique;
 };
 
-// Execute the intersection query using hash table deduplication
-QueryResults executeHashQuery(
+// Execute the intersection query using two-pass approach
+QueryResults executeTwoPassQuery(
     MeshIntersectionLauncher& intersectionLauncher,
     MeshIntersectionLaunchParams& params1,
     MeshIntersectionLaunchParams& params2,
     int mesh1NumTriangles,
     int mesh2NumTriangles,
-    unsigned long long* d_hash_table,
-    int hash_table_size,
     bool verbose = true
 ) {
-    // Clear hash table (set to 0xFF which is our sentinel for empty)
-    CUDA_CHECK(cudaMemset(d_hash_table, 0xFF, hash_table_size * sizeof(unsigned long long)));
-    
-    // Ensure params use hash table
-    params1.use_hash_table = true;
-    params1.hash_table = d_hash_table;
-    params1.hash_table_size = hash_table_size;
-    
-    params2.use_hash_table = true;
-    params2.hash_table = d_hash_table;
-    params2.hash_table_size = hash_table_size;
+    // PASS 1: Count collisions
+    int* d_collision_counts1 = nullptr;
+    int* d_collision_counts2 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_collision_counts1, (size_t)mesh1NumTriangles * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_collision_counts2, (size_t)mesh2NumTriangles * sizeof(int)));
 
-    // Launch kernels (Single pass; pass param is ignored by kernel when use_hash_table is true)
+    params1.use_hash_table = false;
+    params1.collision_counts = d_collision_counts1;
+    params1.pass = 1;
     intersectionLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+
+    params2.use_hash_table = false;
+    params2.collision_counts = d_collision_counts2;
+    params2.pass = 1;
     intersectionLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
 
-    // Compact results
-    // Allocate max output size (e.g. 2M to be safe, though true unique count is likely much lower)
-    int max_output = 2000000; 
-    MeshOverlapResult* d_merged_results = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_merged_results, max_output * sizeof(MeshOverlapResult)));
-    
-    int numUnique = compact_hash_table(d_hash_table, hash_table_size, d_merged_results, max_output);
-    
+    // Scan counts
+    long long* d_collision_offsets1 = nullptr;
+    long long* d_collision_offsets2 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_collision_offsets1, (size_t)mesh1NumTriangles * sizeof(long long)));
+    CUDA_CHECK(cudaMalloc(&d_collision_offsets2, (size_t)mesh2NumTriangles * sizeof(long long)));
+
+    long long total_results1 = exclusive_scan_gpu(d_collision_counts1, d_collision_offsets1, mesh1NumTriangles);
+    long long total_results2 = exclusive_scan_gpu(d_collision_counts2, d_collision_offsets2, mesh2NumTriangles);
+
+    CUDA_CHECK(cudaFree(d_collision_counts1));
+    CUDA_CHECK(cudaFree(d_collision_counts2));
+
     if (verbose) {
-         std::cout << "Hash Table Query found " << numUnique << " unique pairs." << std::endl;
+        std::cout << "Pass 1: Found " << total_results1 << " + " << total_results2
+                  << " = " << (total_results1 + total_results2) << " potential intersections." << std::endl;
     }
-    
+
+    // PASS 2: Store results into a single merged buffer
+    long long total_all = total_results1 + total_results2;
+    MeshOverlapResult* d_merged_results = nullptr;
+    if (total_all > 0) {
+        CUDA_CHECK(cudaMalloc(&d_merged_results, (size_t)total_all * sizeof(MeshOverlapResult)));
+    }
+
+    params1.collision_offsets = d_collision_offsets1;
+    params1.results = d_merged_results;
+    params1.pass = 2;
+    intersectionLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+
+    params2.collision_offsets = d_collision_offsets2;
+    params2.results = (d_merged_results ? d_merged_results + total_results1 : nullptr);
+    params2.pass = 2;
+    intersectionLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+
+    CUDA_CHECK(cudaFree(d_collision_offsets1));
+    CUDA_CHECK(cudaFree(d_collision_offsets2));
+
+    int numUnique = 0;
+    if (total_all > 0) {
+        numUnique = (int)merge_and_deduplicate_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
+    }
+
+    if (verbose) {
+        std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;
+    }
+
     return {d_merged_results, numUnique};
 }
 
@@ -194,11 +226,6 @@ int main(int argc, char* argv[]) {
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
     
-    // Allocate Hash Table (16M items = 128MB)
-    int hash_table_size = 16777216;
-    unsigned long long* d_hash_table = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_hash_table, hash_table_size * sizeof(unsigned long long)));
-    
     unsigned char* d_object_tested1 = nullptr;
     unsigned char* d_object_tested2 = nullptr;
     CUDA_CHECK(cudaMalloc(&d_object_tested1, mesh1NumObjects * sizeof(unsigned char)));
@@ -223,9 +250,9 @@ int main(int argc, char* argv[]) {
     params1.results = nullptr; 
     params1.pass = 0; 
     // Hash params
-    params1.use_hash_table = true;
-    params1.hash_table = d_hash_table;
-    params1.hash_table_size = hash_table_size;
+    params1.use_hash_table = false;
+    params1.hash_table = nullptr;
+    params1.hash_table_size = 0;
     params1.object_tested = d_object_tested1;
     
     MeshIntersectionLaunchParams params2;
@@ -245,19 +272,18 @@ int main(int argc, char* argv[]) {
     params2.results = nullptr; 
     params2.pass = 0;
     // Hash params
-    params2.use_hash_table = true;
-    params2.hash_table = d_hash_table;
-    params2.hash_table_size = hash_table_size;
+    params2.use_hash_table = false;
+    params2.hash_table = nullptr;
+    params2.hash_table_size = 0;
     params2.object_tested = d_object_tested2;
     
     timer.next("Warmup");
     if (warmupRuns > 0) {
-        std::cout << "Running " << warmupRuns << " warmup iterations (hash-based)..." << std::endl;
+        std::cout << "Running " << warmupRuns << " warmup iterations (two-pass)..." << std::endl;
         for (int warmup = 0; warmup < warmupRuns; ++warmup) {
-            QueryResults warmupResults = executeHashQuery(
+            QueryResults warmupResults = executeTwoPassQuery(
                 intersectionLauncher, params1, params2,
                 mesh1NumTriangles, mesh2NumTriangles,
-                d_hash_table, hash_table_size,
                 false
             );
             if (warmupResults.d_merged_results) CUDA_CHECK(cudaFree(warmupResults.d_merged_results));
@@ -266,20 +292,18 @@ int main(int argc, char* argv[]) {
     
     timer.next("Query");
     
-    std::cout << "\n=== Executing mesh intersection detection ===" << std::endl;
-    QueryResults queryResults = executeHashQuery(
-        intersectionLauncher, params1, params2,
-        mesh1NumTriangles, mesh2NumTriangles,
-        d_hash_table, hash_table_size,
-        true
-    );
+        std::cout << "\n=== Executing mesh intersection detection ===" << std::endl;
+        QueryResults queryResults = executeTwoPassQuery(
+            intersectionLauncher, params1, params2,
+            mesh1NumTriangles, mesh2NumTriangles,
+            true
+        );
     
     MeshOverlapResult* d_merged_results = queryResults.d_merged_results;
     int numUnique = queryResults.numUnique;
     
     timer.next("GPU Deduplication");
-    // Already done by hash table!
-    std::cout << "Deduplication: Performed on-the-fly via Hash Table." << std::endl;
+    std::cout << "Deduplication: Performed via thrust sort/unique." << std::endl;
     
     timer.next("Download Results");
     
@@ -312,7 +336,6 @@ int main(int argc, char* argv[]) {
     timer.next("Cleanup");
     
     if (d_merged_results) CUDA_CHECK(cudaFree(d_merged_results));
-    CUDA_CHECK(cudaFree(d_hash_table));
     if (d_object_tested1) CUDA_CHECK(cudaFree(d_object_tested1));
     if (d_object_tested2) CUDA_CHECK(cudaFree(d_object_tested2));
     

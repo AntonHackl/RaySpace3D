@@ -65,9 +65,6 @@ GeometryData ObjMeshDatasetLoader::load(const std::string& filePath) {
 
     for (size_t shapeIdx = 0; shapeIdx < shapes.size(); ++shapeIdx) {
         const auto& shape = shapes[shapeIdx];
-        if (shapeIdx % 100 == 0 || shapeIdx == shapes.size() - 1) {
-            printProgressBar(shapeIdx + 1, shapes.size());
-        }
 
         if (shape.mesh.num_face_vertices.empty()) {
             skippedShapes++;

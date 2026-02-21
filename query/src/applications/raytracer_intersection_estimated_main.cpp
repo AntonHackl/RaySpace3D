@@ -57,8 +57,7 @@ QueryResults executeHashQuery(
     intersectionLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
     intersectionLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
 
-    int max_output = std::max(mesh1NumTriangles, mesh2NumTriangles) * 2; // Heuristic
-    if (max_output < 2000000) max_output = 2000000;
+    int max_output = hash_table_size; 
 
     MeshOverlapResult* d_merged_results = nullptr;
     CUDA_CHECK(cudaMalloc(&d_merged_results, max_output * sizeof(MeshOverlapResult)));
@@ -72,17 +71,6 @@ QueryResults executeHashQuery(
     return {d_merged_results, numUnique};
 }
 
-unsigned int nextPow2(unsigned int v) {
-    if (v == 0) return 1;
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    v++;
-    return v;
-}
 
 // Helper to calculate global average size of objects from grid statistics
 float calculateGlobalAvgSize(const std::vector<GridCell>& cells) {
@@ -262,8 +250,10 @@ int main(int argc, char* argv[]) {
         
         // Cap to reasonable int size for hash table param
         if (target > 1073741824ULL) target = 1073741824ULL;
-
-        hash_table_size = nextPow2((unsigned int)target);
+        hash_table_size = (int)target;
+        if (hash_table_size % 2 == 0) {
+            hash_table_size += 1;
+        }
     }
 
     std::cout << "\n=== Query Configuration ===" << std::endl;

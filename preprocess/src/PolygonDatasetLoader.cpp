@@ -35,9 +35,6 @@ GeometryData PolygonDatasetLoader::load(const std::string& wktFilePath) {
     TriangulationStats stats;
 
     for (size_t poly_idx = 0; poly_idx < polygons.size(); ++poly_idx) {
-        if (poly_idx % 100 == 0 || poly_idx == polygons.size() - 1)  {
-            printProgressBar(poly_idx + 1, polygons.size());
-        }
         const auto& poly = polygons[poly_idx];
         try {
             auto result = triangulatePolygon(poly);
