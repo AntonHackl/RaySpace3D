@@ -10,6 +10,7 @@
 #include <sstream>
 #include <set>
 #include <algorithm>
+#include <chrono>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -40,6 +41,7 @@ QueryResults executeSplitQuery(
     int mesh2NumTriangles,
     int mesh1NumObjects,
     int mesh2NumObjects,
+    PerformanceTimer* timer = nullptr,
     bool verbose = true
 ) {
     params1.use_hash_table = false;
@@ -69,8 +71,25 @@ QueryResults executeSplitQuery(
     params2.results = nullptr;
     params2.pass = 1;
 
+    auto t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchOverlapMesh1ToMesh2(params1, mesh1NumTriangles);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Overlap_Mesh1ToMesh2_Pass1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchOverlapMesh2ToMesh1(params2, mesh2NumTriangles);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Overlap_Mesh2ToMesh1_Pass1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
 
     long long overlapResults1 = exclusive_scan_gpu(d_overlap_counts1, d_overlap_offsets1, mesh1NumTriangles);
     long long overlapResults2 = exclusive_scan_gpu(d_overlap_counts2, d_overlap_offsets2, mesh2NumTriangles);
@@ -91,8 +110,25 @@ QueryResults executeSplitQuery(
     params2.results = d_overlap_pairs ? (d_overlap_pairs + overlapResults1) : nullptr;
     params2.pass = 2;
 
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchOverlapMesh1ToMesh2(params1, mesh1NumTriangles);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Overlap_Mesh1ToMesh2_Pass2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchOverlapMesh2ToMesh1(params2, mesh2NumTriangles);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Overlap_Mesh2ToMesh1_Pass2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
 
     int numOverlap = 0;
     if (totalOverlapResults > 0) {
@@ -124,8 +160,25 @@ QueryResults executeSplitQuery(
     params2.results = nullptr;
     params2.pass = 1;
 
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchContainmentMesh1ToMesh2(params1, mesh1NumObjects);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Containment_Mesh1ToMesh2_Pass1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchContainmentMesh2ToMesh1(params2, mesh2NumObjects);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Containment_Mesh2ToMesh1_Pass1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
 
     long long containmentResults1 = exclusive_scan_gpu(d_containment_counts1, d_containment_offsets1, mesh1NumObjects);
     long long containmentResults2 = exclusive_scan_gpu(d_containment_counts2, d_containment_offsets2, mesh2NumObjects);
@@ -146,8 +199,25 @@ QueryResults executeSplitQuery(
     params2.results = d_containment_pairs ? (d_containment_pairs + containmentResults1) : nullptr;
     params2.pass = 2;
 
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchContainmentMesh1ToMesh2(params1, mesh1NumObjects);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Containment_Mesh1ToMesh2_Pass2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchContainmentMesh2ToMesh1(params2, mesh2NumObjects);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Containment_Mesh2ToMesh1_Pass2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
 
     int numContainment = 0;
     if (totalContainmentResults > 0) {
@@ -379,6 +449,7 @@ int main(int argc, char* argv[]) {
                 intersectionLauncher, params1, params2,
                 mesh1NumTriangles, mesh2NumTriangles,
                 mesh1NumObjects, mesh2NumObjects,
+                nullptr,
                 false
             );
             if (warmupResults.d_merged_results) CUDA_CHECK(cudaFree(warmupResults.d_merged_results));
@@ -392,14 +463,12 @@ int main(int argc, char* argv[]) {
             intersectionLauncher, params1, params2,
             mesh1NumTriangles, mesh2NumTriangles,
             mesh1NumObjects, mesh2NumObjects,
+            &timer,
             true
         );
     
     MeshQueryResult* d_merged_results = queryResults.d_merged_results;
     int numUnique = queryResults.numUnique;
-    
-    timer.next("GPU Deduplication");
-    std::cout << "Predicate resolution: overlap OR containment merged and deduplicated on GPU." << std::endl;
     
     timer.next("Download Results");
     

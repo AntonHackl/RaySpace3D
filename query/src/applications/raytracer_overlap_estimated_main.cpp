@@ -11,6 +11,7 @@
 #include <set>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -42,6 +43,7 @@ QueryResults executeHashQuery(
     unsigned long long* d_hash_table,
     unsigned long long hash_table_size,
     long long estimated_pairs,
+    PerformanceTimer* timer = nullptr,
     bool verbose = true
 ) {
     // Clear hash table (set to 0xFF which is our sentinel for empty)
@@ -58,8 +60,25 @@ QueryResults executeHashQuery(
     params2.hash_table = d_hash_table;
     params2.hash_table_size = hash_table_size;
 
+    auto t0 = std::chrono::high_resolution_clock::now();
     overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Hash_Mesh1ToMesh2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+
+    t0 = std::chrono::high_resolution_clock::now();
     overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Hash_Mesh2ToMesh1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
 
     // Use estimated pairs to size the output buffer, with a fallback and a safety factor
     long long safe_estimate = (estimated_pairs > 0) ? (long long)(estimated_pairs * 1.2) : (long long)hash_table_size;
@@ -366,6 +385,7 @@ int main(int argc, char* argv[]) {
                 d_warmup_hash_table,
                 warmupHashSize,
                 warmupEstimatedPairs,
+                nullptr,
                 false
             );
 
@@ -400,6 +420,7 @@ int main(int argc, char* argv[]) {
             d_hash_table,
             hash_table_size,
             estimatedPairs,
+            &timer,
             verboseRun
         );
 

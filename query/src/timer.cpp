@@ -8,6 +8,7 @@ PerformanceTimer::PerformanceTimer() : is_running(false) {
 
 void PerformanceTimer::start(const std::string& phaseName) {
     phases.clear();
+    manualMeasurements.clear();
     total_start = std::chrono::high_resolution_clock::now();
     is_running = true;
     
@@ -44,6 +45,16 @@ void PerformanceTimer::finish(const std::string& filename) {
     printResults(filename);
 }
 
+void PerformanceTimer::addMeasurement(const std::string& phaseName, long long durationUs) {
+    const auto now = std::chrono::high_resolution_clock::now();
+    Phase phase;
+    phase.name = phaseName;
+    phase.start_time = now;
+    phase.end_time = now;
+    phase.duration_us = durationUs;
+    manualMeasurements.push_back(phase);
+}
+
 void PerformanceTimer::endCurrentPhase() {
     if (!phases.empty() && phases.back().end_time == std::chrono::high_resolution_clock::time_point{}) {
         phases.back().end_time = std::chrono::high_resolution_clock::now();
@@ -77,6 +88,12 @@ void PerformanceTimer::printResults(const std::string& filename) const {
                   << std::right << std::setw(20) << phase.duration_us << " microseconds ("
                   << std::fixed << std::setprecision(2) << (double)phase.duration_us / 1000.0 << " ms)" << std::endl;
     }
+
+    for (const auto& phase : manualMeasurements) {
+        std::cout << std::left << std::setw(30) << (phase.name + ":")
+                  << std::right << std::setw(20) << phase.duration_us << " microseconds ("
+                  << std::fixed << std::setprecision(2) << (double)phase.duration_us / 1000.0 << " ms)" << std::endl;
+    }
     
     long long total_us = getTotalDuration();
     if (total_us > 0) {
@@ -101,8 +118,13 @@ void PerformanceTimer::writeResultsToFile(const std::string& filename) const {
     // To support multiple occurrences of the same phase name (e.g. Query per task),
     // emit numbered, lowercase keys like "query_1", "query_2", "output_1" etc.
     std::unordered_map<std::string,int> counts;
-    for (size_t i = 0; i < phases.size(); ++i) {
-        const auto& phase = phases[i];
+    std::vector<Phase> allPhases;
+    allPhases.reserve(phases.size() + manualMeasurements.size());
+    allPhases.insert(allPhases.end(), phases.begin(), phases.end());
+    allPhases.insert(allPhases.end(), manualMeasurements.begin(), manualMeasurements.end());
+
+    for (size_t i = 0; i < allPhases.size(); ++i) {
+        const auto& phase = allPhases[i];
         std::string name = phase.name;
         // convert to lowercase
         std::string lname;
@@ -116,7 +138,7 @@ void PerformanceTimer::writeResultsToFile(const std::string& filename) const {
         file << "      \"duration_us\": " << phase.duration_us << ",\n";
         file << "      \"duration_ms\": " << std::fixed << std::setprecision(2) << (double)phase.duration_us / 1000.0 << "\n";
         file << "    }";
-        if (i < phases.size() - 1) file << ",";
+        if (i < allPhases.size() - 1) file << ",";
         file << "\n";
     }
 

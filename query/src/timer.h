@@ -15,6 +15,8 @@ public:
     void next(const std::string& phaseName);
     
     void finish(const std::string& filename);
+
+    void addMeasurement(const std::string& phaseName, long long durationUs);
     
     long long getPhaseDuration(const std::string& phaseName) const;
     
@@ -29,6 +31,7 @@ private:
     };
     
     std::vector<Phase> phases;
+    std::vector<Phase> manualMeasurements;
     std::chrono::high_resolution_clock::time_point total_start;
     std::chrono::high_resolution_clock::time_point total_end;
     bool is_running;

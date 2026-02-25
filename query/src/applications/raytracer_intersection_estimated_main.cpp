@@ -11,6 +11,7 @@
 #include <set>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -41,6 +42,7 @@ QueryResults executeHashQuery(
     int mesh2NumTriangles,
     unsigned long long* d_hash_table,
     int hash_table_size,
+    PerformanceTimer* timer = nullptr,
     bool verbose = true
 ) {
     // Clear hash table (set to 0xFF which is our sentinel for empty)
@@ -54,8 +56,25 @@ QueryResults executeHashQuery(
     params2.hash_table = d_hash_table;
     params2.hash_table_size = hash_table_size;
 
+    auto t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Hash_Mesh1ToMesh2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+
+    t0 = std::chrono::high_resolution_clock::now();
     intersectionLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Hash_Mesh2ToMesh1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
 
     int max_output = hash_table_size; 
 
@@ -364,7 +383,8 @@ int main(int argc, char* argv[]) {
     QueryResults results = executeHashQuery(
         intersectionLauncher, params1, params2,
         mesh1NumTriangles, mesh2NumTriangles,
-        d_hash_table, hash_table_size
+        d_hash_table, hash_table_size,
+        &timer
     );
 
     std::cout << "Actual Intersection Pairs: " << results.numUnique << std::endl;
