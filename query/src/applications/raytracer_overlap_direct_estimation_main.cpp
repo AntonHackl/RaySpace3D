@@ -129,6 +129,8 @@ int main(int argc, char* argv[]) {
     std::string mesh2Path = "";
     std::string outputJsonPath = "estimated_overlap_timing.json";
     std::string ptxPath = detectPTXPath();
+    int numberOfRuns = 1;
+    int warmupRuns = 2;
     bool estimateOnly = false;
     float gamma = 0.8f;
     float epsilon = 0.001f;
@@ -143,6 +145,8 @@ int main(int argc, char* argv[]) {
                 std::cout << "  --mesh2 <path>         Path to second mesh dataset (geometry file)" << std::endl;
                 std::cout << "  --output <path>        Path to JSON file for performance timing output (default: estimated_overlap_timing.json)" << std::endl;
                 std::cout << "  --ptx <ptx_file>       Path to compiled PTX file (default: auto-detect)" << std::endl;
+                std::cout << "  --runs <number>        Number of measured query runs (default: 1)" << std::endl;
+                std::cout << "  --warmup-runs <number> Number of warmup iterations (default: 2)" << std::endl;
                 std::cout << "  --gamma <float>        Gamma parameter for estimation (default: 0.8)" << std::endl;
                 std::cout << "  --epsilon <float>      Epsilon parameter for estimation (default: 0.001)" << std::endl;
                 std::cout << "  --estimate-only        Only run selectivity estimation, skip actual query" << std::endl;
@@ -161,6 +165,12 @@ int main(int argc, char* argv[]) {
             else if (arg == "--ptx" && i + 1 < argc) {
                 ptxPath = argv[++i];
             }
+            else if (arg == "--runs" && i + 1 < argc) {
+                numberOfRuns = std::atoi(argv[++i]);
+            }
+            else if (arg == "--warmup-runs" && i + 1 < argc) {
+                warmupRuns = std::atoi(argv[++i]);
+            }
             else if (arg == "--gamma" && i + 1 < argc) {
                 gamma = std::stof(argv[++i]);
             }
@@ -177,6 +187,9 @@ int main(int argc, char* argv[]) {
         std::cerr << "Usage: " << argv[0] << " --mesh1 <path> --mesh2 <path> [options]" << std::endl;
         return 1;
     }
+
+    if (numberOfRuns < 1) numberOfRuns = 1;
+    if (warmupRuns < 0) warmupRuns = 0;
     
     timer.start("Load Mesh1");
     GeometryData mesh1 = loadGeometryFromFile(mesh1Path);
@@ -193,91 +206,89 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // --- ESTIMATION PHASE ---
-    timer.next("Selectivity Estimation");
-    
-    long long estimatedPairs = 0;
+    auto estimatePairs = [&](bool verbose) -> long long {
+        long long estimatedPairs = 0;
 
-    if (mesh1.grid.hasGrid && mesh2.grid.hasGrid) {
-        float width = mesh1.grid.maxBound.x - mesh1.grid.minBound.x;
-        float height = mesh1.grid.maxBound.y - mesh1.grid.minBound.y;
-        float depth = mesh1.grid.maxBound.z - mesh1.grid.minBound.z;
-        float csX = width / mesh1.grid.resolution.x;
-        float csY = height / mesh1.grid.resolution.y;
-        float csZ = depth / mesh1.grid.resolution.z;
-        float cellVolume = csX * csY * csZ;
-        
-        int numCells = mesh1.grid.resolution.x * mesh1.grid.resolution.y * mesh1.grid.resolution.z;
-        if (mesh1.grid.cells.size() == numCells && mesh2.grid.cells.size() == numCells) {
-            float estimatedPairsFloat = estimateOverlapSelectivity(
-                mesh1.grid.cells.data(), 
-                mesh2.grid.cells.data(), 
-                numCells, 
-                cellVolume,
-                epsilon,
-                gamma
-            );
-            
-            float avgSize1 = calculateGlobalAvgSize(mesh1.grid.cells);
-            float avgSize2 = calculateGlobalAvgSize(mesh2.grid.cells);
-            float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.cells);
-            float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.cells);
-            
-            // Scale sizes by cube root of VolRatio to get "effective" linear dimension
-            // For sparse/elongated objects, this reduces the effective size significantly
-            float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
-            float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
-            
-            float combinedSize = effectiveSize1 + effectiveSize2;
-            float minkowskiVol = combinedSize * combinedSize * combinedSize;
-            
-            if (cellVolume < 1e-9f) cellVolume = 1e-9f;
-            
-            float alpha = minkowskiVol / cellVolume;
-            if (alpha < 1.0f) alpha = 1.0f; 
-            
-            estimatedPairs = (long long)(estimatedPairsFloat / alpha);
+        if (mesh1.grid.hasGrid && mesh2.grid.hasGrid) {
+            float width = mesh1.grid.maxBound.x - mesh1.grid.minBound.x;
+            float height = mesh1.grid.maxBound.y - mesh1.grid.minBound.y;
+            float depth = mesh1.grid.maxBound.z - mesh1.grid.minBound.z;
+            float csX = width / mesh1.grid.resolution.x;
+            float csY = height / mesh1.grid.resolution.y;
+            float csZ = depth / mesh1.grid.resolution.z;
+            float cellVolume = csX * csY * csZ;
 
-            std::cout << "\n=== Selectivity Estimation (Overlap - Direct) ===" << std::endl;
-            std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
-            std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
-            std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
-            std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
-            std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
-            std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
-            std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
-            std::cout << "Replication Factor (alpha):" << alpha << std::endl;
-            std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
-            std::cout << "==============================\n" << std::endl;
-        } else {
-             std::cerr << "Error: Grid mismatch. Skipping estimation." << std::endl;
+            int numCells = mesh1.grid.resolution.x * mesh1.grid.resolution.y * mesh1.grid.resolution.z;
+            if (mesh1.grid.cells.size() == (size_t)numCells && mesh2.grid.cells.size() == (size_t)numCells) {
+                float estimatedPairsFloat = estimateOverlapSelectivity(
+                    mesh1.grid.cells.data(),
+                    mesh2.grid.cells.data(),
+                    numCells,
+                    cellVolume,
+                    epsilon,
+                    gamma
+                );
+
+                float avgSize1 = calculateGlobalAvgSize(mesh1.grid.cells);
+                float avgSize2 = calculateGlobalAvgSize(mesh2.grid.cells);
+                float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.cells);
+                float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.cells);
+
+                float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
+                float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
+
+                float combinedSize = effectiveSize1 + effectiveSize2;
+                float minkowskiVol = combinedSize * combinedSize * combinedSize;
+
+                if (cellVolume < 1e-9f) cellVolume = 1e-9f;
+
+                float alpha = minkowskiVol / cellVolume;
+                if (alpha < 1.0f) alpha = 1.0f;
+
+                estimatedPairs = (long long)(estimatedPairsFloat / alpha);
+
+                if (verbose) {
+                    std::cout << "\n=== Selectivity Estimation (Overlap - Direct) ===" << std::endl;
+                    std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
+                    std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
+                    std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
+                    std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
+                    std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
+                    std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
+                    std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
+                    std::cout << "Replication Factor (alpha):" << alpha << std::endl;
+                    std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+                    std::cout << "==============================\n" << std::endl;
+                }
+            } else if (verbose) {
+                std::cerr << "Error: Grid mismatch. Skipping estimation." << std::endl;
+            }
+        } else if (verbose) {
+            std::cout << "Skipping estimation: Grid data not found." << std::endl;
         }
-    } else {
-        std::cout << "Skipping estimation: Grid data not found." << std::endl;
-    }
+
+        return estimatedPairs;
+    };
+
+    auto computeHashTableSize = [](long long estimatedPairs) -> unsigned long long {
+        unsigned long long hash_table_size = 16777216;
+        if (estimatedPairs > 0) {
+            unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
+            if (target < 1024) target = 1024;
+            if (target > 2147483648ULL) target = 2147483648ULL;
+
+            hash_table_size = target;
+            if (hash_table_size % 2 == 0) hash_table_size++;
+        }
+        return hash_table_size;
+    };
 
     if (estimateOnly) {
+        timer.next("Selectivity Estimation");
+        (void)estimatePairs(true);
         timer.finish(outputJsonPath);
         return 0;
     }
-
-    // Calculate hash table size
-    unsigned long long hash_table_size = 16777216;
-    if (estimatedPairs > 0) {
-        // Direct estimation: use estimated size / load factor directly (no nextPow2)
-        // Load factor roughly 0.5 to keep collisions low even with linear probing
-        unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
-        if (target < 1024) target = 1024;
-        
-        // Ensure within sane limits for a single allocation
-        if (target > 2147483648ULL) target = 2147483648ULL; // Cap at 2GB items if needed, or higher
-        
-        hash_table_size = target;
-        // Make sure it's odd to avoid some stride issues with bad hashes (though our hash is mixed)
-        if (hash_table_size % 2 == 0) hash_table_size++;
-    }
-
-    std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
 
     // --- EXECUTION PHASE ---
     timer.next("Init OptiX");
@@ -305,9 +316,6 @@ int main(int argc, char* argv[]) {
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
 
-    unsigned long long* d_hash_table = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_hash_table, hash_table_size * sizeof(unsigned long long)));
-
     MeshOverlapLaunchParams params1 = {};
     params1.mesh1_vertices = mesh1Uploader.getVertices();
     params1.mesh1_indices = (uint3*)mesh1Uploader.getIndices();
@@ -328,21 +336,76 @@ int main(int argc, char* argv[]) {
     params2.mesh2_indices = (uint3*)mesh1Uploader.getIndices();
     params2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
 
-    timer.next("Execute Hash Query");
-    QueryResults queryResults = executeHashQuery(overlapLauncher, params1, params2, mesh1NumTriangles, mesh2NumTriangles, d_hash_table, hash_table_size, estimatedPairs);
+    timer.next("Warmup");
+    if (warmupRuns > 0) {
+        std::cout << "Running " << warmupRuns << " warmup iterations (estimation + hash query)..." << std::endl;
+        for (int warmup = 0; warmup < warmupRuns; ++warmup) {
+            long long warmupEstimatedPairs = estimatePairs(false);
+            unsigned long long warmupHashSize = computeHashTableSize(warmupEstimatedPairs);
+            unsigned long long* d_warmup_hash_table = nullptr;
+            CUDA_CHECK(cudaMalloc(&d_warmup_hash_table, warmupHashSize * sizeof(unsigned long long)));
 
-    timer.next("Download Results");
-    std::vector<MeshQueryResult> uniqueResults;
-    if (queryResults.numUnique > 0) {
-        uniqueResults.resize(queryResults.numUnique);
-        CUDA_CHECK(cudaMemcpy(uniqueResults.data(), queryResults.d_merged_results, 
-                              (size_t)queryResults.numUnique * sizeof(MeshQueryResult), 
-                              cudaMemcpyDeviceToHost));
+            QueryResults warmupResults = executeHashQuery(
+                overlapLauncher,
+                params1,
+                params2,
+                mesh1NumTriangles,
+                mesh2NumTriangles,
+                d_warmup_hash_table,
+                warmupHashSize,
+                warmupEstimatedPairs,
+                false
+            );
+
+            if (warmupResults.d_merged_results) CUDA_CHECK(cudaFree(warmupResults.d_merged_results));
+            CUDA_CHECK(cudaFree(d_warmup_hash_table));
+        }
+    }
+
+    int finalNumUnique = 0;
+    std::vector<MeshQueryResult> hostResults;
+    for (int run = 0; run < numberOfRuns; ++run) {
+        bool verboseRun = (run == 0);
+
+        timer.next("Selectivity Estimation");
+        long long estimatedPairs = estimatePairs(verboseRun);
+        unsigned long long hash_table_size = computeHashTableSize(estimatedPairs);
+
+        if (verboseRun) {
+            std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
+        }
+
+        unsigned long long* d_hash_table = nullptr;
+        CUDA_CHECK(cudaMalloc(&d_hash_table, hash_table_size * sizeof(unsigned long long)));
+
+        timer.next("Execute Hash Query");
+        QueryResults queryResults = executeHashQuery(
+            overlapLauncher,
+            params1,
+            params2,
+            mesh1NumTriangles,
+            mesh2NumTriangles,
+            d_hash_table,
+            hash_table_size,
+            estimatedPairs,
+            verboseRun
+        );
+
+        timer.next("Download Results");
+        hostResults.clear();
+        if (queryResults.numUnique > 0) {
+            hostResults.resize(queryResults.numUnique);
+            CUDA_CHECK(cudaMemcpy(hostResults.data(), queryResults.d_merged_results,
+                                  (size_t)queryResults.numUnique * sizeof(MeshQueryResult),
+                                  cudaMemcpyDeviceToHost));
+        }
+        finalNumUnique = queryResults.numUnique;
+
+        if (queryResults.d_merged_results) CUDA_CHECK(cudaFree(queryResults.d_merged_results));
+        CUDA_CHECK(cudaFree(d_hash_table));
     }
 
     timer.next("Cleanup");
-    CUDA_CHECK(cudaFree(d_hash_table));
-    if (queryResults.d_merged_results) CUDA_CHECK(cudaFree(queryResults.d_merged_results));
 
     std::set<int> mesh1UniqueObjects(mesh1.triangleToObject.begin(), mesh1.triangleToObject.end());
     int mesh1NumObjects = mesh1UniqueObjects.size();
@@ -354,7 +417,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh1 objects: " << mesh1NumObjects << std::endl;
     std::cout << "Mesh2 triangles: " << mesh2NumTriangles << std::endl;
     std::cout << "Mesh2 objects: " << mesh2NumObjects << std::endl;
-    std::cout << "Unique object pairs: " << queryResults.numUnique << std::endl;
+    std::cout << "Unique object pairs: " << finalNumUnique << std::endl;
 
     timer.finish(outputJsonPath);
     
