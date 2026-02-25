@@ -32,4 +32,5 @@ struct MeshIntersectionLaunchParams {
     long long* collision_offsets;
     MeshQueryResult* results;
     int pass;
+    int swap_result_ids; // 0 = (src_obj, hit_obj), 1 = (hit_obj, src_obj)
 };

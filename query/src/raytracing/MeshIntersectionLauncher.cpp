@@ -6,11 +6,9 @@
 MeshIntersectionLauncher::MeshIntersectionLauncher(OptixContext& context, OptixPipelineManager& basePipeline)
     : context_(context), basePipeline_(basePipeline),
     module_(nullptr), pipeline_(nullptr),
-    raygenOverlap12PG_(nullptr), raygenOverlap21PG_(nullptr),
-    raygenContainment12PG_(nullptr), raygenContainment21PG_(nullptr),
+    raygenOverlapPG_(nullptr), raygenContainmentPG_(nullptr),
     missPG_(nullptr), hitPG_(nullptr),
-    d_rg_overlap12_(0), d_rg_overlap21_(0),
-    d_rg_containment12_(0), d_rg_containment21_(0),
+    d_rg_overlap_(0), d_rg_containment_(0),
     d_ms_(0), d_hg_(0), d_lp_(0) {
     
     createModule();
@@ -77,29 +75,17 @@ void MeshIntersectionLauncher::createModule() {
 void MeshIntersectionLauncher::createProgramGroups() {
     OptixProgramGroupOptions pgOptions = {};
     
-    OptixProgramGroupDesc rgOverlap12 = {};
-    rgOverlap12.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    rgOverlap12.raygen.module = module_;
-    rgOverlap12.raygen.entryFunctionName = "__raygen__mesh1_to_mesh2_overlap";
-    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &rgOverlap12, 1, &pgOptions, nullptr, nullptr, &raygenOverlap12PG_));
+    OptixProgramGroupDesc rgOverlap = {};
+    rgOverlap.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    rgOverlap.raygen.module = module_;
+    rgOverlap.raygen.entryFunctionName = "__raygen__mesh_overlap";
+    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &rgOverlap, 1, &pgOptions, nullptr, nullptr, &raygenOverlapPG_));
 
-    OptixProgramGroupDesc rgOverlap21 = {};
-    rgOverlap21.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    rgOverlap21.raygen.module = module_;
-    rgOverlap21.raygen.entryFunctionName = "__raygen__mesh2_to_mesh1_overlap";
-    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &rgOverlap21, 1, &pgOptions, nullptr, nullptr, &raygenOverlap21PG_));
-
-    OptixProgramGroupDesc rgContain12 = {};
-    rgContain12.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    rgContain12.raygen.module = module_;
-    rgContain12.raygen.entryFunctionName = "__raygen__mesh1_to_mesh2_containment";
-    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &rgContain12, 1, &pgOptions, nullptr, nullptr, &raygenContainment12PG_));
-
-    OptixProgramGroupDesc rgContain21 = {};
-    rgContain21.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    rgContain21.raygen.module = module_;
-    rgContain21.raygen.entryFunctionName = "__raygen__mesh2_to_mesh1_containment";
-    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &rgContain21, 1, &pgOptions, nullptr, nullptr, &raygenContainment21PG_));
+    OptixProgramGroupDesc rgContain = {};
+    rgContain.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    rgContain.raygen.module = module_;
+    rgContain.raygen.entryFunctionName = "__raygen__mesh_containment";
+    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &rgContain, 1, &pgOptions, nullptr, nullptr, &raygenContainmentPG_));
     
     // Miss program group
     OptixProgramGroupDesc missDesc = {};
@@ -131,10 +117,8 @@ void MeshIntersectionLauncher::createPipelines() {
     linkOptions.maxTraceDepth = 1;
     
     std::vector<OptixProgramGroup> pgs2 = {
-        raygenOverlap12PG_,
-        raygenOverlap21PG_,
-        raygenContainment12PG_,
-        raygenContainment21PG_,
+        raygenOverlapPG_,
+        raygenContainmentPG_,
         missPG_,
         hitPG_
     };
@@ -153,17 +137,11 @@ void MeshIntersectionLauncher::createSBT() {
         char header[OPTIX_SBT_RECORD_HEADER_SIZE]; 
     };
     
-    RaygenRecord rgOverlap12 = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(raygenOverlap12PG_, &rgOverlap12));
+    RaygenRecord rgOverlap = {};
+    OPTIX_CHECK(optixSbtRecordPackHeader(raygenOverlapPG_, &rgOverlap));
 
-    RaygenRecord rgOverlap21 = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(raygenOverlap21PG_, &rgOverlap21));
-
-    RaygenRecord rgContain12 = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(raygenContainment12PG_, &rgContain12));
-
-    RaygenRecord rgContain21 = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(raygenContainment21PG_, &rgContain21));
+    RaygenRecord rgContain = {};
+    OPTIX_CHECK(optixSbtRecordPackHeader(raygenContainmentPG_, &rgContain));
     
     MissRecord msRecord = {};
     OPTIX_CHECK(optixSbtRecordPackHeader(missPG_, &msRecord));
@@ -171,22 +149,18 @@ void MeshIntersectionLauncher::createSBT() {
     HitRecord hgRecord = {};
     OPTIX_CHECK(optixSbtRecordPackHeader(hitPG_, &hgRecord));
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg_overlap12_), sizeof(RaygenRecord)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg_overlap21_), sizeof(RaygenRecord)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg_containment12_), sizeof(RaygenRecord)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg_containment21_), sizeof(RaygenRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg_overlap_), sizeof(RaygenRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg_containment_), sizeof(RaygenRecord)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_ms_), sizeof(MissRecord)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hg_), sizeof(HitRecord)));
     
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg_overlap12_), &rgOverlap12, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg_overlap21_), &rgOverlap21, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg_containment12_), &rgContain12, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg_containment21_), &rgContain21, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg_overlap_), &rgOverlap, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg_containment_), &rgContain, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_ms_), &msRecord, sizeof(MissRecord), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_hg_), &hgRecord, sizeof(HitRecord), cudaMemcpyHostToDevice));
     
     sbt_ = {};
-    sbt_.raygenRecord = d_rg_overlap12_;
+    sbt_.raygenRecord = d_rg_overlap_;
     sbt_.missRecordBase = d_ms_;
     sbt_.missRecordStrideInBytes = sizeof(MissRecord);
     sbt_.missRecordCount = 1;
@@ -205,35 +179,47 @@ void MeshIntersectionLauncher::launchInternal(const MeshIntersectionLaunchParams
 }
 
 void MeshIntersectionLauncher::launchOverlapMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int launchSize) {
-    launchInternal(params, launchSize, d_rg_overlap12_);
+    MeshIntersectionLaunchParams launchParams = params;
+    launchParams.swap_result_ids = 0;
+    launchInternal(launchParams, launchSize, d_rg_overlap_);
 }
 
 void MeshIntersectionLauncher::launchOverlapMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize) {
-    launchInternal(params, launchSize, d_rg_overlap21_);
+    MeshIntersectionLaunchParams launchParams = params;
+    launchParams.swap_result_ids = 1;
+    launchInternal(launchParams, launchSize, d_rg_overlap_);
 }
 
 void MeshIntersectionLauncher::launchContainmentMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int launchSize) {
-    launchInternal(params, launchSize, d_rg_containment12_);
+    MeshIntersectionLaunchParams launchParams = params;
+    launchParams.swap_result_ids = 0;
+    launchInternal(launchParams, launchSize, d_rg_containment_);
 }
 
 void MeshIntersectionLauncher::launchContainmentMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize) {
-    launchInternal(params, launchSize, d_rg_containment21_);
+    MeshIntersectionLaunchParams launchParams = params;
+    launchParams.swap_result_ids = 1;
+    launchInternal(launchParams, launchSize, d_rg_containment_);
+}
+
+void MeshIntersectionLauncher::launchMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int launchSize) {
+    launchOverlapMesh1ToMesh2(params, launchSize);
+}
+
+void MeshIntersectionLauncher::launchMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize) {
+    launchOverlapMesh2ToMesh1(params, launchSize);
 }
 
 void MeshIntersectionLauncher::freeInternal() {
     if (d_lp_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_lp_)));
     if (d_hg_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_hg_)));
     if (d_ms_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_ms_)));
-    if (d_rg_containment21_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg_containment21_)));
-    if (d_rg_containment12_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg_containment12_)));
-    if (d_rg_overlap21_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg_overlap21_)));
-    if (d_rg_overlap12_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg_overlap12_)));
+    if (d_rg_containment_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg_containment_)));
+    if (d_rg_overlap_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg_overlap_)));
     if (pipeline_) optixPipelineDestroy(pipeline_);
     if (hitPG_) optixProgramGroupDestroy(hitPG_);
     if (missPG_) optixProgramGroupDestroy(missPG_);
-    if (raygenContainment21PG_) optixProgramGroupDestroy(raygenContainment21PG_);
-    if (raygenContainment12PG_) optixProgramGroupDestroy(raygenContainment12PG_);
-    if (raygenOverlap21PG_) optixProgramGroupDestroy(raygenOverlap21PG_);
-    if (raygenOverlap12PG_) optixProgramGroupDestroy(raygenOverlap12PG_);
+    if (raygenContainmentPG_) optixProgramGroupDestroy(raygenContainmentPG_);
+    if (raygenOverlapPG_) optixProgramGroupDestroy(raygenOverlapPG_);
     if (module_) optixModuleDestroy(module_);
 }

@@ -5,9 +5,9 @@
 
 MeshOverlapLauncher::MeshOverlapLauncher(OptixContext& context, OptixPipelineManager& basePipeline)
     : context_(context), basePipeline_(basePipeline),
-      module_(nullptr), pipeline1_(nullptr), pipeline2_(nullptr),
-      raygenPG1_(nullptr), raygenPG2_(nullptr), missPG_(nullptr), hitPG_(nullptr),
-      d_rg1_(0), d_rg2_(0), d_ms_(0), d_hg_(0), d_lp1_(0), d_lp2_(0) {
+    module_(nullptr), pipeline_(nullptr),
+    raygenPG_(nullptr), missPG_(nullptr), hitPG_(nullptr),
+    d_rg_(0), d_ms_(0), d_hg_(0), d_lp_(0) {
     
     createModule();
     createProgramGroups();
@@ -73,19 +73,11 @@ void MeshOverlapLauncher::createModule() {
 void MeshOverlapLauncher::createProgramGroups() {
     OptixProgramGroupOptions pgOptions = {};
     
-    // Raygen program group 1: Mesh1 to Mesh2
-    OptixProgramGroupDesc raygenDesc1 = {};
-    raygenDesc1.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    raygenDesc1.raygen.module = module_;
-    raygenDesc1.raygen.entryFunctionName = "__raygen__mesh1_to_mesh2";
-    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &raygenDesc1, 1, &pgOptions, nullptr, nullptr, &raygenPG1_));
-    
-    // Raygen program group 2: Mesh2 to Mesh1
-    OptixProgramGroupDesc raygenDesc2 = {};
-    raygenDesc2.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    raygenDesc2.raygen.module = module_;
-    raygenDesc2.raygen.entryFunctionName = "__raygen__mesh2_to_mesh1";
-    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &raygenDesc2, 1, &pgOptions, nullptr, nullptr, &raygenPG2_));
+    OptixProgramGroupDesc raygenDesc = {};
+    raygenDesc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    raygenDesc.raygen.module = module_;
+    raygenDesc.raygen.entryFunctionName = "__raygen__mesh_overlap";
+    OPTIX_CHECK(optixProgramGroupCreate(context_.getContext(), &raygenDesc, 1, &pgOptions, nullptr, nullptr, &raygenPG_));
     
     OptixProgramGroupDesc missDesc = {};
     missDesc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
@@ -114,15 +106,9 @@ void MeshOverlapLauncher::createPipelines() {
     OptixPipelineLinkOptions linkOptions = {};
     linkOptions.maxTraceDepth = 1;
     
-    // Pipeline 1: Mesh1 to Mesh2
-    std::vector<OptixProgramGroup> pgs1 = { raygenPG1_, missPG_, hitPG_ };
+    std::vector<OptixProgramGroup> pgs = { raygenPG_, missPG_, hitPG_ };
     OPTIX_CHECK(optixPipelineCreate(context_.getContext(), &pipelineCompileOptions, &linkOptions,
-                                    pgs1.data(), pgs1.size(), nullptr, nullptr, &pipeline1_));
-    
-    // Pipeline 2: Mesh2 to Mesh1
-    std::vector<OptixProgramGroup> pgs2 = { raygenPG2_, missPG_, hitPG_ };
-    OPTIX_CHECK(optixPipelineCreate(context_.getContext(), &pipelineCompileOptions, &linkOptions,
-                                    pgs2.data(), pgs2.size(), nullptr, nullptr, &pipeline2_));
+                                    pgs.data(), pgs.size(), nullptr, nullptr, &pipeline_));
 }
 
 void MeshOverlapLauncher::createSBT() {
@@ -136,11 +122,8 @@ void MeshOverlapLauncher::createSBT() {
         char header[OPTIX_SBT_RECORD_HEADER_SIZE]; 
     };
     
-    RaygenRecord rgRecord1 = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(raygenPG1_, &rgRecord1));
-    
-    RaygenRecord rgRecord2 = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(raygenPG2_, &rgRecord2));
+    RaygenRecord rgRecord = {};
+    OPTIX_CHECK(optixSbtRecordPackHeader(raygenPG_, &rgRecord));
     
     MissRecord msRecord = {};
     OPTIX_CHECK(optixSbtRecordPackHeader(missPG_, &msRecord));
@@ -148,67 +131,53 @@ void MeshOverlapLauncher::createSBT() {
     HitRecord hgRecord = {};
     OPTIX_CHECK(optixSbtRecordPackHeader(hitPG_, &hgRecord));
     
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg1_), sizeof(RaygenRecord)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg2_), sizeof(RaygenRecord)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_rg_), sizeof(RaygenRecord)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_ms_), sizeof(MissRecord)));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_hg_), sizeof(HitRecord)));
     
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg1_), &rgRecord1, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg2_), &rgRecord2, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_rg_), &rgRecord, sizeof(RaygenRecord), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_ms_), &msRecord, sizeof(MissRecord), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(reinterpret_cast<void*>(d_hg_), &hgRecord, sizeof(HitRecord), cudaMemcpyHostToDevice));
     
-    sbt1_ = {};
-    sbt1_.raygenRecord = d_rg1_;
-    sbt1_.missRecordBase = d_ms_;
-    sbt1_.missRecordStrideInBytes = sizeof(MissRecord);
-    sbt1_.missRecordCount = 1;
-    sbt1_.hitgroupRecordBase = d_hg_;
-    sbt1_.hitgroupRecordStrideInBytes = sizeof(HitRecord);
-    sbt1_.hitgroupRecordCount = 1;
+    sbt_ = {};
+    sbt_.raygenRecord = d_rg_;
+    sbt_.missRecordBase = d_ms_;
+    sbt_.missRecordStrideInBytes = sizeof(MissRecord);
+    sbt_.missRecordCount = 1;
+    sbt_.hitgroupRecordBase = d_hg_;
+    sbt_.hitgroupRecordStrideInBytes = sizeof(HitRecord);
+    sbt_.hitgroupRecordCount = 1;
     
-    sbt2_ = {};
-    sbt2_.raygenRecord = d_rg2_;
-    sbt2_.missRecordBase = d_ms_;
-    sbt2_.missRecordStrideInBytes = sizeof(MissRecord);
-    sbt2_.missRecordCount = 1;
-    sbt2_.hitgroupRecordBase = d_hg_;
-    sbt2_.hitgroupRecordStrideInBytes = sizeof(HitRecord);
-    sbt2_.hitgroupRecordCount = 1;
-    
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_lp1_), sizeof(MeshOverlapLaunchParams)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_lp2_), sizeof(MeshOverlapLaunchParams)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_lp_), sizeof(MeshOverlapLaunchParams)));
 }
 
 void MeshOverlapLauncher::launchMesh1ToMesh2(const MeshOverlapLaunchParams& params, int numTriangles) {
-    CUDA_CHECK(cudaMemcpy((void*)d_lp1_, &params, sizeof(MeshOverlapLaunchParams), cudaMemcpyHostToDevice));
-    
-    OPTIX_CHECK(optixLaunch(pipeline1_, 0, d_lp1_, 
-                            sizeof(MeshOverlapLaunchParams), &sbt1_, numTriangles, 1, 1));
-    CUDA_CHECK(cudaDeviceSynchronize());
+    launchInternal(params, numTriangles, 0);
 }
 
 void MeshOverlapLauncher::launchMesh2ToMesh1(const MeshOverlapLaunchParams& params, int numTriangles) {
-    CUDA_CHECK(cudaMemcpy((void*)d_lp2_, &params, sizeof(MeshOverlapLaunchParams), cudaMemcpyHostToDevice));
-    
-    OPTIX_CHECK(optixLaunch(pipeline2_, 0, d_lp2_, 
-                            sizeof(MeshOverlapLaunchParams), &sbt2_, numTriangles, 1, 1));
+    launchInternal(params, numTriangles, 1);
+}
+
+void MeshOverlapLauncher::launchInternal(const MeshOverlapLaunchParams& params, int numTriangles, int swapResultIds) {
+    MeshOverlapLaunchParams launchParams = params;
+    launchParams.swap_result_ids = swapResultIds;
+    CUDA_CHECK(cudaMemcpy((void*)d_lp_, &launchParams, sizeof(MeshOverlapLaunchParams), cudaMemcpyHostToDevice));
+
+    OPTIX_CHECK(optixLaunch(pipeline_, 0, d_lp_,
+                            sizeof(MeshOverlapLaunchParams), &sbt_, numTriangles, 1, 1));
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void MeshOverlapLauncher::freeInternal() {
-    if (d_lp2_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_lp2_)));
-    if (d_lp1_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_lp1_)));
+    if (d_lp_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_lp_)));
     if (d_hg_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_hg_)));
     if (d_ms_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_ms_)));
-    if (d_rg2_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg2_)));
-    if (d_rg1_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg1_)));
-    if (pipeline2_) optixPipelineDestroy(pipeline2_);
-    if (pipeline1_) optixPipelineDestroy(pipeline1_);
+    if (d_rg_) CUDA_CHECK(cudaFree(reinterpret_cast<void*>(d_rg_)));
+    if (pipeline_) optixPipelineDestroy(pipeline_);
     if (hitPG_) optixProgramGroupDestroy(hitPG_);
     if (missPG_) optixProgramGroupDestroy(missPG_);
-    if (raygenPG2_) optixProgramGroupDestroy(raygenPG2_);
-    if (raygenPG1_) optixProgramGroupDestroy(raygenPG1_);
+    if (raygenPG_) optixProgramGroupDestroy(raygenPG_);
     if (module_) optixModuleDestroy(module_);
 }
 

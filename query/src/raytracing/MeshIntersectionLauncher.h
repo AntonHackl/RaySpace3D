@@ -18,6 +18,8 @@ public:
     void launchOverlapMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize);
     void launchContainmentMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int launchSize);
     void launchContainmentMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize);
+    void launchMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int launchSize);
+    void launchMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize);
     
     bool isValid() const { return pipeline_ != nullptr; }
     
@@ -26,17 +28,13 @@ private:
     OptixPipelineManager& basePipeline_;
     OptixModule module_;
     OptixPipeline pipeline_;
-    OptixProgramGroup raygenOverlap12PG_;
-    OptixProgramGroup raygenOverlap21PG_;
-    OptixProgramGroup raygenContainment12PG_;
-    OptixProgramGroup raygenContainment21PG_;
+    OptixProgramGroup raygenOverlapPG_;
+    OptixProgramGroup raygenContainmentPG_;
     OptixProgramGroup missPG_;
     OptixProgramGroup hitPG_;
     OptixShaderBindingTable sbt_;
-    CUdeviceptr d_rg_overlap12_;
-    CUdeviceptr d_rg_overlap21_;
-    CUdeviceptr d_rg_containment12_;
-    CUdeviceptr d_rg_containment21_;
+    CUdeviceptr d_rg_overlap_;
+    CUdeviceptr d_rg_containment_;
     CUdeviceptr d_ms_;
     CUdeviceptr d_hg_;
     CUdeviceptr d_lp_;

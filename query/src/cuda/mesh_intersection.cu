@@ -206,8 +206,7 @@ __device__ int collect_containing_target_objects(const float3& point, int* outOb
     return (outCount > maxOutObjects) ? maxOutObjects : outCount;
 }
 
-// Mesh1 to Mesh2: overlap-only edge ray casting
-extern "C" __global__ void __raygen__mesh1_to_mesh2_overlap() {
+extern "C" __global__ void __raygen__mesh_overlap() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
     const int triangleIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
@@ -222,7 +221,7 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2_overlap() {
     float3 v1 = mesh_intersection_params.mesh1_vertices[triIndices.y];
     float3 v2 = mesh_intersection_params.mesh1_vertices[triIndices.z];
     
-    int objectIdMesh1 = mesh_intersection_params.mesh1_triangle_to_object[triangleIdx];
+    int sourceObjectId = mesh_intersection_params.mesh1_triangle_to_object[triangleIdx];
     
     float3 edgeStarts[3] = {v0, v1, v2};
     float3 edgeEnds[3] = {v1, v2, v0};
@@ -253,8 +252,8 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2_overlap() {
             edgeStart,
             normalizedDir,
             edgeLength,
-            objectIdMesh1,
-            false,
+            sourceObjectId,
+            mesh_intersection_params.swap_result_ids != 0,
             writeCursor,
             epsilon);
 
@@ -266,78 +265,18 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2_overlap() {
     }
 }
 
-// Mesh2 to Mesh1: overlap-only edge ray casting
-extern "C" __global__ void __raygen__mesh2_to_mesh1_overlap() {
+extern "C" __global__ void __raygen__mesh_containment() {
     const uint3 idx = optixGetLaunchIndex();
-    const uint3 dim = optixGetLaunchDimensions();
-    const int triangleIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
-    
-    if (triangleIdx >= mesh_intersection_params.mesh1_num_triangles) {
-        return;
-    }
-    
-    uint3 triIndices = mesh_intersection_params.mesh1_indices[triangleIdx];
-    
-    float3 v0 = mesh_intersection_params.mesh1_vertices[triIndices.x];
-    float3 v1 = mesh_intersection_params.mesh1_vertices[triIndices.y];
-    float3 v2 = mesh_intersection_params.mesh1_vertices[triIndices.z];
-    
-    int objectIdMesh2 = mesh_intersection_params.mesh1_triangle_to_object[triangleIdx];
-    
-    float3 edgeStarts[3] = {v0, v1, v2};
-    float3 edgeEnds[3] = {v1, v2, v0};
-    
-    const float epsilon = 1e-6f;
-    int totalHits = 0;
-    long long writeCursor = 0;
-    if (!mesh_intersection_params.use_hash_table && mesh_intersection_params.pass == 2) {
-        writeCursor = mesh_intersection_params.collision_offsets[triangleIdx];
-    }
-    
-    // Test all edges first
-    for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
-        float3 edgeStart = edgeStarts[edgeIdx];
-        float3 edgeEnd = edgeEnds[edgeIdx];
-        
-        float3 edgeDir = make_float3(edgeEnd.x - edgeStart.x, 
-                                     edgeEnd.y - edgeStart.y, 
-                                     edgeEnd.z - edgeStart.z);
-        float edgeLength = distance3f(edgeStart, edgeEnd);
-        
-        if (edgeLength < epsilon) {
-            continue;
-        }
-
-        float3 normalizedDir = normalize3f(edgeDir);
-        int hitsFound = trace_edge_multi_hits(
-            edgeStart,
-            normalizedDir,
-            edgeLength,
-            objectIdMesh2,
-            true,
-            writeCursor,
-            epsilon);
-
-        totalHits += hitsFound;
-    }
-
-    if (!mesh_intersection_params.use_hash_table && mesh_intersection_params.pass == 1) {
-        mesh_intersection_params.collision_counts[triangleIdx] = totalHits;
-    }
-}
-
-extern "C" __global__ void __raygen__mesh1_to_mesh2_containment() {
-    const uint3 idx = optixGetLaunchIndex();
-    const int objectIdMesh1 = static_cast<int>(idx.x);
-    if (objectIdMesh1 >= mesh_intersection_params.mesh1_num_objects) {
+    const int sourceObjectId = static_cast<int>(idx.x);
+    if (sourceObjectId >= mesh_intersection_params.mesh1_num_objects) {
         return;
     }
 
     if (!mesh_intersection_params.use_hash_table && mesh_intersection_params.pass == 1) {
-        mesh_intersection_params.collision_counts[objectIdMesh1] = 0;
+        mesh_intersection_params.collision_counts[sourceObjectId] = 0;
     }
 
-    const int firstTri = mesh_intersection_params.first_triangle_index_per_object[objectIdMesh1];
+    const int firstTri = mesh_intersection_params.first_triangle_index_per_object[sourceObjectId];
     if (firstTri < 0 || firstTri >= mesh_intersection_params.mesh1_num_triangles) {
         return;
     }
@@ -352,53 +291,22 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2_containment() {
 
     if (mesh_intersection_params.use_hash_table) {
         for (int i = 0; i < numTargets; ++i) {
-            insert_hash_table(objectIdMesh1, targetObjects[i]);
+            if (mesh_intersection_params.swap_result_ids == 0) {
+                insert_hash_table(sourceObjectId, targetObjects[i]);
+            } else {
+                insert_hash_table(targetObjects[i], sourceObjectId);
+            }
         }
     } else if (mesh_intersection_params.pass == 1) {
-        mesh_intersection_params.collision_counts[objectIdMesh1] = numTargets;
+        mesh_intersection_params.collision_counts[sourceObjectId] = numTargets;
     } else if (mesh_intersection_params.pass == 2) {
-        const long long outIdx = mesh_intersection_params.collision_offsets[objectIdMesh1];
+        const long long outIdx = mesh_intersection_params.collision_offsets[sourceObjectId];
         for (int i = 0; i < numTargets; ++i) {
-            mesh_intersection_params.results[outIdx + i] = {objectIdMesh1, targetObjects[i]};
+            if (mesh_intersection_params.swap_result_ids == 0) {
+                mesh_intersection_params.results[outIdx + i] = {sourceObjectId, targetObjects[i]};
+            } else {
+                mesh_intersection_params.results[outIdx + i] = {targetObjects[i], sourceObjectId};
+            }
         }
     }
 }
-
-extern "C" __global__ void __raygen__mesh2_to_mesh1_containment() {
-    const uint3 idx = optixGetLaunchIndex();
-    const int objectIdMesh2 = static_cast<int>(idx.x);
-    if (objectIdMesh2 >= mesh_intersection_params.mesh1_num_objects) {
-        return;
-    }
-
-    if (!mesh_intersection_params.use_hash_table && mesh_intersection_params.pass == 1) {
-        mesh_intersection_params.collision_counts[objectIdMesh2] = 0;
-    }
-
-    const int firstTri = mesh_intersection_params.first_triangle_index_per_object[objectIdMesh2];
-    if (firstTri < 0 || firstTri >= mesh_intersection_params.mesh1_num_triangles) {
-        return;
-    }
-
-    const uint3 triIndices = mesh_intersection_params.mesh1_indices[firstTri];
-    const float3 queryPoint = mesh_intersection_params.mesh1_vertices[triIndices.x];
-    int targetObjects[32];
-    const int numTargets = collect_containing_target_objects(queryPoint, targetObjects, 32);
-    if (numTargets <= 0) {
-        return;
-    }
-
-    if (mesh_intersection_params.use_hash_table) {
-        for (int i = 0; i < numTargets; ++i) {
-            insert_hash_table(targetObjects[i], objectIdMesh2);
-        }
-    } else if (mesh_intersection_params.pass == 1) {
-        mesh_intersection_params.collision_counts[objectIdMesh2] = numTargets;
-    } else if (mesh_intersection_params.pass == 2) {
-        const long long outIdx = mesh_intersection_params.collision_offsets[objectIdMesh2];
-        for (int i = 0; i < numTargets; ++i) {
-            mesh_intersection_params.results[outIdx + i] = {targetObjects[i], objectIdMesh2};
-        }
-    }
-}
-

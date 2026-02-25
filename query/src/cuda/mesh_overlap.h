@@ -28,4 +28,5 @@ struct MeshOverlapLaunchParams {
     long long* collision_offsets;     // Exclusive scan of counts (output positions)
     MeshQueryResult* results; // Pass 2: actual collision pairs
     int pass;                   // 1 = count only, 2 = write results
+    int swap_result_ids;        // 0 = (src_obj, hit_obj), 1 = (hit_obj, src_obj)
 };

@@ -123,7 +123,7 @@ __device__ float3 normalize3f(const float3& v) {
     return make_float3(v.x / len, v.y / len, v.z / len);
 }
 
-extern "C" __global__ void __raygen__mesh1_to_mesh2() {
+extern "C" __global__ void __raygen__mesh_overlap() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
     const int triangleIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
@@ -138,7 +138,7 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
     float3 v1 = mesh_overlap_params.mesh1_vertices[triIndices.y];
     float3 v2 = mesh_overlap_params.mesh1_vertices[triIndices.z];
     
-    int objectIdMesh1 = mesh_overlap_params.mesh1_triangle_to_object[triangleIdx];
+    int sourceObjectId = mesh_overlap_params.mesh1_triangle_to_object[triangleIdx];
     
     float3 edgeStarts[3] = {v0, v1, v2};
     float3 edgeEnds[3] = {v1, v2, v0};
@@ -166,65 +166,8 @@ extern "C" __global__ void __raygen__mesh1_to_mesh2() {
             edgeStart,
             normalizedDir,
             edgeLength,
-            objectIdMesh1,
-            false,
-            triangleIdx,
-            writeCursor,
-            epsilon);
-    }
-
-    if (!mesh_overlap_params.use_hash_table && mesh_overlap_params.pass == 1) {
-        mesh_overlap_params.collision_counts[triangleIdx] = totalHits;
-    }
-}
-
-extern "C" __global__ void __raygen__mesh2_to_mesh1() {
-    const uint3 idx = optixGetLaunchIndex();
-    const uint3 dim = optixGetLaunchDimensions();
-    const int triangleIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
-    
-    if (triangleIdx >= mesh_overlap_params.mesh1_num_triangles) {
-        return;
-    }
-    
-    uint3 triIndices = mesh_overlap_params.mesh1_indices[triangleIdx];
-    
-    float3 v0 = mesh_overlap_params.mesh1_vertices[triIndices.x];
-    float3 v1 = mesh_overlap_params.mesh1_vertices[triIndices.y];
-    float3 v2 = mesh_overlap_params.mesh1_vertices[triIndices.z];
-    
-    // Note: in this raygen we iterate triangles of Mesh2 (uploaded as mesh1_*) against Mesh1 GAS.
-    // To keep MeshQueryResult ordering consistent as (mesh1_id, mesh2_id), we swap pair order on write.
-    int objectIdMesh2 = mesh_overlap_params.mesh1_triangle_to_object[triangleIdx];
-    
-    float3 edgeStarts[3] = {v0, v1, v2};
-    float3 edgeEnds[3] = {v1, v2, v0};
-    
-    const float epsilon = 1e-6f;
-
-    int totalHits = 0;
-    long long writeCursor = 0;
-    if (!mesh_overlap_params.use_hash_table && mesh_overlap_params.pass == 2) {
-        writeCursor = mesh_overlap_params.collision_offsets[triangleIdx];
-    }
-
-    for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
-        const float3 edgeStart = edgeStarts[edgeIdx];
-        const float3 edgeEnd = edgeEnds[edgeIdx];
-
-        const float3 edgeDir = make_float3(edgeEnd.x - edgeStart.x,
-                                           edgeEnd.y - edgeStart.y,
-                                           edgeEnd.z - edgeStart.z);
-        const float edgeLength = distance3f(edgeStart, edgeEnd);
-        if (edgeLength < epsilon) continue;
-
-        const float3 normalizedDir = normalize3f(edgeDir);
-        totalHits += trace_edge_multi_hits(
-            edgeStart,
-            normalizedDir,
-            edgeLength,
-            objectIdMesh2,
-            true,
+            sourceObjectId,
+            mesh_overlap_params.swap_result_ids != 0,
             triangleIdx,
             writeCursor,
             epsilon);

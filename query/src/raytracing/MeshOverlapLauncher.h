@@ -18,26 +18,23 @@ public:
     
     void launchMesh2ToMesh1(const MeshOverlapLaunchParams& params, int numTriangles);
     
-    bool isValid() const { return pipeline1_ != nullptr && pipeline2_ != nullptr; }
+    bool isValid() const { return pipeline_ != nullptr; }
     
 private:
     OptixContext& context_;
     OptixPipelineManager& basePipeline_;
     OptixModule module_;
-    OptixPipeline pipeline1_;
-    OptixPipeline pipeline2_;
-    OptixProgramGroup raygenPG1_;
-    OptixProgramGroup raygenPG2_;
+    OptixPipeline pipeline_;
+    OptixProgramGroup raygenPG_;
     OptixProgramGroup missPG_;
     OptixProgramGroup hitPG_;
-    OptixShaderBindingTable sbt1_;
-    OptixShaderBindingTable sbt2_;
-    CUdeviceptr d_rg1_;
-    CUdeviceptr d_rg2_;
+    OptixShaderBindingTable sbt_;
+    CUdeviceptr d_rg_;
     CUdeviceptr d_ms_;
     CUdeviceptr d_hg_;
-    CUdeviceptr d_lp1_;
-    CUdeviceptr d_lp2_;
+    CUdeviceptr d_lp_;
+
+    void launchInternal(const MeshOverlapLaunchParams& params, int numTriangles, int swapResultIds);
     
     void createModule();
     void createProgramGroups();
