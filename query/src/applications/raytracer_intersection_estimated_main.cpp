@@ -301,12 +301,27 @@ int main(int argc, char* argv[]) {
     int mesh1NumObjects = mesh1Objects.size();
     int mesh2NumObjects = mesh2Objects.size();
 
-    unsigned char* d_object_tested1 = nullptr;
-    unsigned char* d_object_tested2 = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_object_tested1, mesh1NumObjects * sizeof(unsigned char)));
-    CUDA_CHECK(cudaMalloc(&d_object_tested2, mesh2NumObjects * sizeof(unsigned char)));
-    CUDA_CHECK(cudaMemset(d_object_tested1, 0, mesh1NumObjects * sizeof(unsigned char)));
-    CUDA_CHECK(cudaMemset(d_object_tested2, 0, mesh2NumObjects * sizeof(unsigned char)));
+    std::vector<int> firstTriangleMesh1(mesh1NumObjects, -1);
+    std::vector<int> firstTriangleMesh2(mesh2NumObjects, -1);
+    for (int tri = 0; tri < mesh1NumTriangles; ++tri) {
+        int obj = mesh1.triangleToObject[tri];
+        if (firstTriangleMesh1[obj] == -1) {
+            firstTriangleMesh1[obj] = tri;
+        }
+    }
+    for (int tri = 0; tri < mesh2NumTriangles; ++tri) {
+        int obj = mesh2.triangleToObject[tri];
+        if (firstTriangleMesh2[obj] == -1) {
+            firstTriangleMesh2[obj] = tri;
+        }
+    }
+
+    int* d_first_triangle_mesh1 = nullptr;
+    int* d_first_triangle_mesh2 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_first_triangle_mesh1, mesh1NumObjects * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_first_triangle_mesh2, mesh2NumObjects * sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_first_triangle_mesh1, firstTriangleMesh1.data(), mesh1NumObjects * sizeof(int), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_first_triangle_mesh2, firstTriangleMesh2.data(), mesh2NumObjects * sizeof(int), cudaMemcpyHostToDevice));
 
     MeshIntersectionLaunchParams params1;
     params1.mesh1_vertices = mesh1Uploader.getVertices();
@@ -340,8 +355,8 @@ int main(int argc, char* argv[]) {
     params2.hash_table_size = hash_table_size;
     params2.use_hash_table = true;
 
-    params1.object_tested = d_object_tested1;
-    params2.object_tested = d_object_tested2;
+    params1.first_triangle_index_per_object = d_first_triangle_mesh1;
+    params2.first_triangle_index_per_object = d_first_triangle_mesh2;
 
     timer.next("Query");
     std::cout << "Running Intersection Query..." << std::endl;
@@ -357,8 +372,8 @@ int main(int argc, char* argv[]) {
     timer.next("Cleanup");
     CUDA_CHECK(cudaFree(d_hash_table));
     CUDA_CHECK(cudaFree(results.d_merged_results));
-    CUDA_CHECK(cudaFree(d_object_tested1));
-    CUDA_CHECK(cudaFree(d_object_tested2));
+    CUDA_CHECK(cudaFree(d_first_triangle_mesh1));
+    CUDA_CHECK(cudaFree(d_first_triangle_mesh2));
 
     mesh1Uploader.free();
     mesh2Uploader.free();

@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include "../optix/OptixHelpers.h"
 #include <math.h>
+#include "optix_common_shaders.cuh"
 
 extern "C" __constant__ MeshOverlapLaunchParams mesh_overlap_params;
 

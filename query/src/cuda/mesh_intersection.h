@@ -24,8 +24,8 @@ struct MeshIntersectionLaunchParams {
     int hash_table_size;
     int use_hash_table; // Use int instead of bool
     
-    // Object tracking for containment checks
-    unsigned char* object_tested;  // Track which objects had edge hits
+    // Exactly one launch triangle per source object for containment fallback
+    int* first_triangle_index_per_object;
     
     // Two-pass results (legacy)
     int* collision_counts;

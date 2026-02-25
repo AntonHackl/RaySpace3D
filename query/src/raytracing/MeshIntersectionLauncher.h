@@ -14,30 +14,34 @@ public:
     MeshIntersectionLauncher(const MeshIntersectionLauncher&) = delete;
     MeshIntersectionLauncher& operator=(const MeshIntersectionLauncher&) = delete;
     
-    void launchMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int numTriangles);
+    void launchOverlapMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int launchSize);
+    void launchOverlapMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize);
+    void launchContainmentMesh1ToMesh2(const MeshIntersectionLaunchParams& params, int launchSize);
+    void launchContainmentMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int launchSize);
     
-    void launchMesh2ToMesh1(const MeshIntersectionLaunchParams& params, int numTriangles);
-    
-    bool isValid() const { return pipeline1_ != nullptr && pipeline2_ != nullptr; }
+    bool isValid() const { return pipeline_ != nullptr; }
     
 private:
     OptixContext& context_;
     OptixPipelineManager& basePipeline_;
     OptixModule module_;
-    OptixPipeline pipeline1_;
-    OptixPipeline pipeline2_;
-    OptixProgramGroup raygenPG1_;
-    OptixProgramGroup raygenPG2_;
+    OptixPipeline pipeline_;
+    OptixProgramGroup raygenOverlap12PG_;
+    OptixProgramGroup raygenOverlap21PG_;
+    OptixProgramGroup raygenContainment12PG_;
+    OptixProgramGroup raygenContainment21PG_;
     OptixProgramGroup missPG_;
     OptixProgramGroup hitPG_;
-    OptixShaderBindingTable sbt1_;
-    OptixShaderBindingTable sbt2_;
-    CUdeviceptr d_rg1_;
-    CUdeviceptr d_rg2_;
+    OptixShaderBindingTable sbt_;
+    CUdeviceptr d_rg_overlap12_;
+    CUdeviceptr d_rg_overlap21_;
+    CUdeviceptr d_rg_containment12_;
+    CUdeviceptr d_rg_containment21_;
     CUdeviceptr d_ms_;
     CUdeviceptr d_hg_;
-    CUdeviceptr d_lp1_;
-    CUdeviceptr d_lp2_;
+    CUdeviceptr d_lp_;
+
+    void launchInternal(const MeshIntersectionLaunchParams& params, int launchSize, CUdeviceptr raygenRecord);
     
     void createModule();
     void createProgramGroups();
