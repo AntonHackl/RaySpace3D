@@ -25,6 +25,8 @@
 #include "common.h"
 #include "../optix/OptixHelpers.h"
 #include "../raytracing/MeshOverlapLauncher.h"
+#include "../raytracing/MeshOverlapEdgesLauncher.h"
+#include "../geometry/EdgeExtractor.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
 
@@ -33,7 +35,117 @@ struct QueryResults {
     long long numUnique;
 };
 
-// Execute the overlap query using two-pass approach
+// Execute the overlap query using edges (optimized for watertight meshes)
+// Mesh1 edges are used for rays, targeting Mesh2's acceleration structure
+// Mesh2 uses traditional triangle-based approach for ray casting
+QueryResults executeTwoPassQueryEdgesOptimized(
+    MeshOverlapEdgesLauncher& edgesLauncher,
+    MeshOverlapLauncher& overlapLauncher,
+    MeshOverlapEdgesLaunchParams& edgesParams1,
+    MeshOverlapLaunchParams& params2,
+    int mesh1NumEdges,
+    int mesh2NumTriangles,
+    const EdgeMeshData& mesh1EdgeData,
+    PerformanceTimer* timer = nullptr,
+    bool verbose = true
+) {
+    // PASS 1: Count collisions for edges
+    int* d_edge_collision_counts_int = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_edge_collision_counts_int, (size_t)mesh1NumEdges * sizeof(int)));
+    
+    edgesParams1.collision_counts = d_edge_collision_counts_int;
+    edgesParams1.pass = 1;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    edgesLauncher.launchMesh1ToMesh2(edgesParams1, mesh1NumEdges);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Edges_Mesh1ToMesh2_Pass1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+    
+    // Scan edge counts
+    long long* d_edge_collision_offsets = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_edge_collision_offsets, (size_t)mesh1NumEdges * sizeof(long long)));
+    long long total_edge_results = exclusive_scan_gpu(d_edge_collision_counts_int, d_edge_collision_offsets, mesh1NumEdges);
+    
+    // PASS 1b: Count collisions for Mesh2->Mesh1 (traditional approach)
+    int* d_collision_counts2 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_collision_counts2, (size_t)mesh2NumTriangles * sizeof(int)));
+    
+    params2.collision_counts = d_collision_counts2;
+    params2.pass = 1;
+    t0 = std::chrono::high_resolution_clock::now();
+    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Mesh2ToMesh1_Pass1",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+    
+    // Scan Mesh2 counts
+    long long* d_collision_offsets2 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_collision_offsets2, (size_t)mesh2NumTriangles * sizeof(long long)));
+    long long total_mesh2_results = exclusive_scan_gpu(d_collision_counts2, d_collision_offsets2, mesh2NumTriangles);
+    
+    CUDA_CHECK(cudaFree(d_collision_counts2));
+    
+    if (verbose) {
+        std::cout << "Pass 1 (Optimized): Found " << total_edge_results << " (edges) + " 
+                  << total_mesh2_results << " (mesh2->mesh1) = " 
+                  << (total_edge_results + total_mesh2_results) << " potential overlaps." << std::endl;
+    }
+    
+    // PASS 2: Store results into merged buffer
+    long long total_all = total_edge_results + total_mesh2_results;
+    MeshQueryResult* d_merged_results = nullptr;
+    if (total_all > 0) {
+        CUDA_CHECK(cudaMalloc(&d_merged_results, (size_t)total_all * sizeof(MeshQueryResult)));
+    }
+    
+    edgesParams1.collision_offsets = d_edge_collision_offsets;
+    edgesParams1.results = d_merged_results;
+    edgesParams1.pass = 2;
+    t0 = std::chrono::high_resolution_clock::now();
+    edgesLauncher.launchMesh1ToMesh2(edgesParams1, mesh1NumEdges);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Edges_Mesh1ToMesh2_Pass2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+    
+    params2.collision_offsets = d_collision_offsets2;
+    params2.results = (d_merged_results ? d_merged_results + total_edge_results : nullptr);
+    params2.pass = 2;
+    t0 = std::chrono::high_resolution_clock::now();
+    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    t1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "Raytrace_Mesh2ToMesh1_Pass2",
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+        );
+    }
+    
+    CUDA_CHECK(cudaFree(d_edge_collision_counts_int));
+    CUDA_CHECK(cudaFree(d_edge_collision_offsets));
+    CUDA_CHECK(cudaFree(d_collision_offsets2));
+    
+    // Deduplicate
+    long long numUnique = merge_and_deduplicate_pairs_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
+    
+    if (verbose) {
+        std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;
+    }
+    
+    return {d_merged_results, numUnique};
+}
+
 QueryResults executeTwoPassQuery(
     MeshOverlapLauncher& overlapLauncher,
     MeshOverlapLaunchParams& params1,
@@ -249,6 +361,18 @@ int main(int argc, char* argv[]) {
     mesh2AS.build();
     std::cout << "Mesh2 acceleration structure built" << std::endl;
     
+    timer.next("Extract Mesh1 Edges");
+    EdgeMeshData mesh1EdgeData = EdgeExtractor::extractAndPrepareEdges(
+        mesh1Data.indices,
+        mesh1Data.triangleToObject,
+        mesh1Data.vertices
+    );
+    int mesh1NumEdges = mesh1EdgeData.num_edges;
+    std::cout << "Mesh1 edges extracted: " << mesh1NumEdges << " unique edges" << std::endl;
+    
+    timer.next("Create Edge Launcher");
+    MeshOverlapEdgesLauncher edgesLauncher(context, basePipeline);
+    
     timer.next("Prepare Kernel Parameters");
     
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
@@ -288,13 +412,36 @@ int main(int argc, char* argv[]) {
     params2.results = nullptr; 
     params2.pass = 0;
     
+    // Prepare edge parameters for optimized query
+    MeshOverlapEdgesLaunchParams edgesParams1;
+    edgesParams1.edge_starts = mesh1EdgeData.d_edge_starts;
+    edgesParams1.edge_ends = mesh1EdgeData.d_edge_ends;
+    edgesParams1.edge_source_object_counts = mesh1EdgeData.d_source_object_counts;
+    edgesParams1.edge_source_objects = mesh1EdgeData.d_source_objects;
+    edgesParams1.edge_source_object_offsets = mesh1EdgeData.d_source_object_offsets;
+    edgesParams1.num_edges = mesh1NumEdges;
+    edgesParams1.mesh2_handle = mesh2AS.getHandle();
+    edgesParams1.mesh2_vertices = mesh2Uploader.getVertices();
+    edgesParams1.mesh2_indices = mesh2Uploader.getIndices();
+    edgesParams1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
+    edgesParams1.hash_table = nullptr;
+    edgesParams1.hash_table_size = 0;
+    edgesParams1.use_hash_table = 0;
+    edgesParams1.use_bitwise_hash = 0;
+    edgesParams1.collision_counts = nullptr;
+    edgesParams1.collision_offsets = nullptr;
+    edgesParams1.results = nullptr;
+    edgesParams1.pass = 0;
+    
     timer.next("Warmup");
     if (warmupRuns > 0) {
-        std::cout << "Running " << warmupRuns << " warmup iterations (two-pass)..." << std::endl;
+        std::cout << "Running " << warmupRuns << " warmup iterations (edge-optimized)..." << std::endl;
         for (int warmup = 0; warmup < warmupRuns; ++warmup) {
-            QueryResults warmupResults = executeTwoPassQuery(
-                overlapLauncher, params1, params2,
-                mesh1NumTriangles, mesh2NumTriangles,
+            QueryResults warmupResults = executeTwoPassQueryEdgesOptimized(
+                edgesLauncher, overlapLauncher, 
+                edgesParams1, params2,
+                mesh1NumEdges, mesh2NumTriangles,
+                mesh1EdgeData,
                 nullptr,
                 false
             );
@@ -304,10 +451,12 @@ int main(int argc, char* argv[]) {
     
     timer.next("Query");
     
-    std::cout << "\n=== Executing mesh overlap detection ===" << std::endl;
-    QueryResults queryResults = executeTwoPassQuery(
-        overlapLauncher, params1, params2,
-        mesh1NumTriangles, mesh2NumTriangles,
+    std::cout << "\n=== Executing mesh overlap detection (edge-optimized) ===" << std::endl;
+    QueryResults queryResults = executeTwoPassQueryEdgesOptimized(
+        edgesLauncher, overlapLauncher, 
+        edgesParams1, params2,
+        mesh1NumEdges, mesh2NumTriangles,
+        mesh1EdgeData,
         &timer,
         true
     );

@@ -99,7 +99,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # CUDA Sources
 set(CUDA_DIR ${SRC_DIR}/cuda)
-set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DIR}/mesh_intersection.cu)
+set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DIR}/mesh_overlap_edges.cu ${CUDA_DIR}/mesh_intersection.cu)
 set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
 set(MESH_QUERY_DEDUP_SOURCE ${CUDA_DIR}/mesh_query_deduplication.cu)
 set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
@@ -129,13 +129,15 @@ set(OPTIX_SOURCES
 
 set(GEOMETRY_SOURCES
     ${GEOMETRY_DIR}/BoundingBox.cpp
-    ${GEOMETRY_DIR}/GeometryUploader.cpp)
+    ${GEOMETRY_DIR}/GeometryUploader.cpp
+    ${GEOMETRY_DIR}/EdgeExtractor.cpp)
 
 set(RAYTRACING_SOURCES
     ${RAYTRACING_DIR}/RayLauncher.cpp
     ${RAYTRACING_DIR}/ResultProcessor.cpp
     ${RAYTRACING_DIR}/FilterRefine.cpp
     ${RAYTRACING_DIR}/MeshOverlapLauncher.cpp
+    ${RAYTRACING_DIR}/MeshOverlapEdgesLauncher.cpp
     ${RAYTRACING_DIR}/MeshIntersectionLauncher.cpp
     ${RAYTRACING_DIR}/MeshContainmentLauncher.cpp)
 
@@ -346,6 +348,7 @@ set_target_properties(raytracer_containment PROPERTIES RUNTIME_OUTPUT_DIRECTORY 
 
 set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
 set(MESH_OVERLAP_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}")
+set(MESH_OVERLAP_EDGES_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap_edges${OPTIX_MODULE_EXTENSION}")
 set(MESH_INTERSECTION_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}")
 set(MESH_CONTAINMENT_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_containment${OPTIX_MODULE_EXTENSION}")
 
@@ -361,6 +364,9 @@ add_custom_target(copy_ptx ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MESH_OVERLAP_PTX_FILE}"
         "${RUNTIME_PTX_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MESH_OVERLAP_EDGES_PTX_FILE}"
+        "${RUNTIME_PTX_DIR}/mesh_overlap_edges${OPTIX_MODULE_EXTENSION}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MESH_INTERSECTION_PTX_FILE}"
         "${RUNTIME_PTX_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}"
