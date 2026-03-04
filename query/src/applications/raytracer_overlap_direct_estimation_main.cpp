@@ -33,6 +33,37 @@ struct QueryResults {
     int numUnique;
 };
 
+enum class QueryDirection {
+    Both,
+    Mesh1ToMesh2,
+    Mesh2ToMesh1
+};
+
+static const char* directionToString(QueryDirection direction) {
+    switch (direction) {
+        case QueryDirection::Mesh1ToMesh2: return "mesh1_to_mesh2";
+        case QueryDirection::Mesh2ToMesh1: return "mesh2_to_mesh1";
+        case QueryDirection::Both:
+        default: return "both";
+    }
+}
+
+static bool parseDirection(const std::string& raw, QueryDirection& outDirection) {
+    if (raw == "both") {
+        outDirection = QueryDirection::Both;
+        return true;
+    }
+    if (raw == "mesh1_to_mesh2") {
+        outDirection = QueryDirection::Mesh1ToMesh2;
+        return true;
+    }
+    if (raw == "mesh2_to_mesh1") {
+        outDirection = QueryDirection::Mesh2ToMesh1;
+        return true;
+    }
+    return false;
+}
+
 // Execute the overlap query using hash table deduplication
 QueryResults executeHashQuery(
     MeshOverlapLauncher& overlapLauncher,
@@ -43,6 +74,7 @@ QueryResults executeHashQuery(
     unsigned long long* d_hash_table,
     unsigned long long hash_table_size,
     long long estimated_pairs,
+    QueryDirection direction,
     PerformanceTimer* timer = nullptr,
     bool verbose = true
 ) {
@@ -60,24 +92,28 @@ QueryResults executeHashQuery(
     params2.hash_table = d_hash_table;
     params2.hash_table_size = hash_table_size;
 
-    auto t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    if (timer) {
-        timer->addMeasurement(
-            "Raytrace_Hash_Mesh1ToMesh2",
-            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
-        );
+    if (direction == QueryDirection::Both || direction == QueryDirection::Mesh1ToMesh2) {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        if (timer) {
+            timer->addMeasurement(
+                "Raytrace_Hash_Mesh1ToMesh2",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+            );
+        }
     }
 
-    t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
-    t1 = std::chrono::high_resolution_clock::now();
-    if (timer) {
-        timer->addMeasurement(
-            "Raytrace_Hash_Mesh2ToMesh1",
-            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
-        );
+    if (direction == QueryDirection::Both || direction == QueryDirection::Mesh2ToMesh1) {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        if (timer) {
+            timer->addMeasurement(
+                "Raytrace_Hash_Mesh2ToMesh1",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
+            );
+        }
     }
 
     // Use estimated pairs to size the output buffer, with a fallback and a safety factor
@@ -153,6 +189,8 @@ int main(int argc, char* argv[]) {
     bool estimateOnly = false;
     float gamma = 0.8f;
     float epsilon = 0.001f;
+    QueryDirection queryDirection = QueryDirection::Both;
+    std::string pairsOutputPath = "";
     
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
@@ -168,6 +206,8 @@ int main(int argc, char* argv[]) {
                 std::cout << "  --warmup-runs <number> Number of warmup iterations (default: 2)" << std::endl;
                 std::cout << "  --gamma <float>        Gamma parameter for estimation (default: 0.8)" << std::endl;
                 std::cout << "  --epsilon <float>      Epsilon parameter for estimation (default: 0.001)" << std::endl;
+                std::cout << "  --query-direction <d>  Query direction: both|mesh1_to_mesh2|mesh2_to_mesh1 (default: both)" << std::endl;
+                std::cout << "  --pairs-output <path>  Optional CSV export path for unique result pairs" << std::endl;
                 std::cout << "  --estimate-only        Only run selectivity estimation, skip actual query" << std::endl;
                 std::cout << "  --help, -h             Show this help message" << std::endl;
                 return 0;
@@ -195,6 +235,17 @@ int main(int argc, char* argv[]) {
             }
             else if (arg == "--epsilon" && i + 1 < argc) {
                 epsilon = std::stof(argv[++i]);
+            }
+            else if (arg == "--query-direction" && i + 1 < argc) {
+                std::string directionRaw = argv[++i];
+                if (!parseDirection(directionRaw, queryDirection)) {
+                    std::cerr << "Error: Invalid --query-direction value: " << directionRaw
+                              << ". Expected one of: both, mesh1_to_mesh2, mesh2_to_mesh1" << std::endl;
+                    return 1;
+                }
+            }
+            else if (arg == "--pairs-output" && i + 1 < argc) {
+                pairsOutputPath = argv[++i];
             }
             else if (arg == "--estimate-only") {
                 estimateOnly = true;
@@ -373,6 +424,7 @@ int main(int argc, char* argv[]) {
                 d_warmup_hash_table,
                 warmupHashSize,
                 warmupEstimatedPairs,
+                queryDirection,
                 nullptr,
                 false
             );
@@ -408,6 +460,7 @@ int main(int argc, char* argv[]) {
             d_hash_table,
             hash_table_size,
             estimatedPairs,
+            queryDirection,
             &timer,
             verboseRun
         );
@@ -438,7 +491,26 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh1 objects: " << mesh1NumObjects << std::endl;
     std::cout << "Mesh2 triangles: " << mesh2NumTriangles << std::endl;
     std::cout << "Mesh2 objects: " << mesh2NumObjects << std::endl;
+    std::cout << "Mesh1 Universe Min: [" << mesh1.grid.minBound.x << ", " << mesh1.grid.minBound.y << ", " << mesh1.grid.minBound.z << "]" << std::endl;
+    std::cout << "Mesh1 Universe Max: [" << mesh1.grid.maxBound.x << ", " << mesh1.grid.maxBound.y << ", " << mesh1.grid.maxBound.z << "]" << std::endl;
+    std::cout << "Mesh2 Universe Min: [" << mesh2.grid.minBound.x << ", " << mesh2.grid.minBound.y << ", " << mesh2.grid.minBound.z << "]" << std::endl;
+    std::cout << "Mesh2 Universe Max: [" << mesh2.grid.maxBound.x << ", " << mesh2.grid.maxBound.y << ", " << mesh2.grid.maxBound.z << "]" << std::endl;
+    std::cout << "Query direction: " << directionToString(queryDirection) << std::endl;
     std::cout << "Unique object pairs: " << finalNumUnique << std::endl;
+
+    if (!pairsOutputPath.empty()) {
+        std::ofstream csvFile(pairsOutputPath);
+        if (!csvFile.is_open()) {
+            std::cerr << "Warning: Failed to open pairs output file: " << pairsOutputPath << std::endl;
+        } else {
+            csvFile << "object_id_mesh1,object_id_mesh2\n";
+            for (const auto& result : hostResults) {
+                csvFile << result.object_id_mesh1 << "," << result.object_id_mesh2 << "\n";
+            }
+            csvFile.close();
+            std::cout << "Pair results written to: " << pairsOutputPath << std::endl;
+        }
+    }
 
     timer.finish(outputJsonPath);
     

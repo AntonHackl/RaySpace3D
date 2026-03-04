@@ -486,6 +486,10 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh2 triangles: " << mesh2NumTriangles << std::endl;
     std::cout << "Mesh1 objects: " << mesh1NumObjects << std::endl;
     std::cout << "Mesh2 objects: " << mesh2NumObjects << std::endl;
+    std::cout << "Mesh1 Universe Min: [" << mesh1Data.grid.minBound.x << ", " << mesh1Data.grid.minBound.y << ", " << mesh1Data.grid.minBound.z << "]" << std::endl;
+    std::cout << "Mesh1 Universe Max: [" << mesh1Data.grid.maxBound.x << ", " << mesh1Data.grid.maxBound.y << ", " << mesh1Data.grid.maxBound.z << "]" << std::endl;
+    std::cout << "Mesh2 Universe Min: [" << mesh2Data.grid.minBound.x << ", " << mesh2Data.grid.minBound.y << ", " << mesh2Data.grid.minBound.z << "]" << std::endl;
+    std::cout << "Mesh2 Universe Max: [" << mesh2Data.grid.maxBound.x << ", " << mesh2Data.grid.maxBound.y << ", " << mesh2Data.grid.maxBound.z << "]" << std::endl;
     std::cout << "Unique intersecting object pairs: " << numUnique << std::endl;
     
     if (exportResults) {

@@ -9,6 +9,8 @@
 
 GeometryData PolygonDatasetLoader::load(const std::string& wktFilePath) {
     GeometryData geometry;
+    float3 minB = {1e30f, 1e30f, 1e30f};
+    float3 maxB = {-1e30f, -1e30f, -1e30f};
     if (wktFilePath.empty()) {
         std::cerr << "Error: WKT dataset path is empty." << std::endl;
         return geometry;
@@ -79,7 +81,15 @@ GeometryData PolygonDatasetLoader::load(const std::string& wktFilePath) {
             }
         }
         size_t vertex_offset = geometry.vertices.size();
-        for (const auto& v : polygon_vertices) geometry.vertices.push_back({v.x, v.y, 0.0f});
+        for (const auto& v : polygon_vertices) {
+            geometry.vertices.push_back({v.x, v.y, 0.0f});
+            minB.x = std::min(minB.x, v.x);
+            minB.y = std::min(minB.y, v.y);
+            minB.z = std::min(minB.z, 0.0f);
+            maxB.x = std::max(maxB.x, v.x);
+            maxB.y = std::max(maxB.y, v.y);
+            maxB.z = std::max(maxB.z, 0.0f);
+        }
         for (const auto& tri : triangles) {
             std::array<unsigned int,3> idx;
             for (int i=0;i<3;++i) { std::pair<float,float> key{tri.vertices[i].x, tri.vertices[i].y}; idx[i] = static_cast<unsigned int>(vertex_offset + vertex_map[key]); }
@@ -88,6 +98,10 @@ GeometryData PolygonDatasetLoader::load(const std::string& wktFilePath) {
         }
     }
     std::cout << "Dataset converted to " << geometry.vertices.size() << " vertices and " << geometry.indices.size() << " triangles" << std::endl;
+    if (!geometry.vertices.empty()) {
+        geometry.grid.minBound = minB;
+        geometry.grid.maxBound = maxB;
+    }
 
     std::cout << "Using dataset triangles for raytracing acceleration structure" << std::endl;
     std::cout << "Geometry loaded: " << geometry.vertices.size() << " vertices, " << geometry.indices.size() << " triangles" << std::endl;

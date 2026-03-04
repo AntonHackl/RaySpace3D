@@ -11,6 +11,8 @@
 
 GeometryData DtMeshDatasetLoader::load(const std::string& filePath) {
     GeometryData geometry;
+    float3 minB = {1e30f, 1e30f, 1e30f};
+    float3 maxB = {-1e30f, -1e30f, -1e30f};
 
     std::cout << "=== DT Mesh Dataset Loading ===" << std::endl;
     std::cout << "Loading DT mesh from file: " << filePath << std::endl;
@@ -60,6 +62,14 @@ GeometryData DtMeshDatasetLoader::load(const std::string& filePath) {
                         if (vertexMap.find(key) == vertexMap.end()) {
                             // New vertex
                             geometry.vertices.push_back({x, y, z});
+                            
+                            minB.x = std::min(minB.x, x);
+                            minB.y = std::min(minB.y, y);
+                            minB.z = std::min(minB.z, z);
+                            maxB.x = std::max(maxB.x, x);
+                            maxB.y = std::max(maxB.y, y);
+                            maxB.z = std::max(maxB.z, z);
+                            
                             vertexMap[key] = geometry.vertices.size() - 1;
                         }
                         indices[v] = vertexMap[key];
@@ -73,6 +83,10 @@ GeometryData DtMeshDatasetLoader::load(const std::string& filePath) {
         }
         
         geometry.totalTriangles = geometry.indices.size();
+        if (!geometry.vertices.empty()) {
+            geometry.grid.minBound = minB;
+            geometry.grid.maxBound = maxB;
+        }
         std::cout << "Total vertices: " << geometry.vertices.size() << std::endl;
         std::cout << "Total triangles: " << geometry.totalTriangles << std::endl;
 

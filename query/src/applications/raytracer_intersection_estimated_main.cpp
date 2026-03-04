@@ -388,6 +388,10 @@ int main(int argc, char* argv[]) {
     );
 
     std::cout << "Actual Intersection Pairs: " << results.numUnique << std::endl;
+    std::cout << "Mesh1 Universe Min: [" << mesh1.grid.minBound.x << ", " << mesh1.grid.minBound.y << ", " << mesh1.grid.minBound.z << "]" << std::endl;
+    std::cout << "Mesh1 Universe Max: [" << mesh1.grid.maxBound.x << ", " << mesh1.grid.maxBound.y << ", " << mesh1.grid.maxBound.z << "]" << std::endl;
+    std::cout << "Mesh2 Universe Min: [" << mesh2.grid.minBound.x << ", " << mesh2.grid.minBound.y << ", " << mesh2.grid.minBound.z << "]" << std::endl;
+    std::cout << "Mesh2 Universe Max: [" << mesh2.grid.maxBound.x << ", " << mesh2.grid.maxBound.y << ", " << mesh2.grid.maxBound.z << "]" << std::endl;
 
     timer.next("Cleanup");
     CUDA_CHECK(cudaFree(d_hash_table));

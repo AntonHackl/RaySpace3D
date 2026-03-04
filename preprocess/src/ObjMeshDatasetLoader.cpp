@@ -13,6 +13,8 @@
 
 GeometryData ObjMeshDatasetLoader::load(const std::string& filePath) {
     GeometryData geometry;
+    float3 minB = {1e30f, 1e30f, 1e30f};
+    float3 maxB = {-1e30f, -1e30f, -1e30f};
 
     std::cout << "=== Mesh Dataset Loading ===" << std::endl;
     std::cout << "Loading mesh from file: " << filePath << std::endl;
@@ -112,6 +114,14 @@ GeometryData ObjMeshDatasetLoader::load(const std::string& filePath) {
                 vertex.x = attrib.vertices[3 * global_vidx + 0];
                 vertex.y = attrib.vertices[3 * global_vidx + 1];
                 vertex.z = attrib.vertices[3 * global_vidx + 2];
+                
+                minB.x = std::min(minB.x, vertex.x);
+                minB.y = std::min(minB.y, vertex.y);
+                minB.z = std::min(minB.z, vertex.z);
+                maxB.x = std::max(maxB.x, vertex.x);
+                maxB.y = std::max(maxB.y, vertex.y);
+                maxB.z = std::max(maxB.z, vertex.z);
+                
                 try {
                     geometry.vertices.push_back(vertex);
                 } catch (const std::exception& e) {
@@ -143,6 +153,10 @@ GeometryData ObjMeshDatasetLoader::load(const std::string& filePath) {
     }
 
     geometry.totalTriangles = geometry.indices.size();
+    if (!geometry.vertices.empty()) {
+        geometry.grid.minBound = minB;
+        geometry.grid.maxBound = maxB;
+    }
 
     std::cout << "\n=== Mesh Loading Complete ===" << std::endl;
     std::cout << "Successfully loaded " << objectIndex << " object(s)" << std::endl;

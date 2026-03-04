@@ -358,6 +358,11 @@ int main(int argc, char* argv[]) {
     std::cout << "Total objects (triangles): " << geometry.totalTriangles << std::endl;
     std::cout << "Total vertices: " << geometry.vertices.size() << std::endl;
     std::cout << "Total triangles: " << geometry.indices.size() << std::endl;
+    std::cout << "Universe Extents: [" << (geometry.grid.maxBound.x - geometry.grid.minBound.x) << ", "
+              << (geometry.grid.maxBound.y - geometry.grid.minBound.y) << ", "
+              << (geometry.grid.maxBound.z - geometry.grid.minBound.z) << "]" << std::endl;
+    std::cout << "Universe Min: [" << geometry.grid.minBound.x << ", " << geometry.grid.minBound.y << ", " << geometry.grid.minBound.z << "]" << std::endl;
+    std::cout << "Universe Max: [" << geometry.grid.maxBound.x << ", " << geometry.grid.maxBound.y << ", " << geometry.grid.maxBound.z << "]" << std::endl;
     std::cout << "Geometry data saved to: " << outputGeometryPath << std::endl;
     std::cout << "Timing data saved to: " << outputTimingPath << std::endl;
     
