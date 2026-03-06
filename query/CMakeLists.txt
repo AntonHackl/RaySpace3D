@@ -130,7 +130,7 @@ set(OPTIX_SOURCES
 set(GEOMETRY_SOURCES
     ${GEOMETRY_DIR}/BoundingBox.cpp
     ${GEOMETRY_DIR}/GeometryUploader.cpp
-    ${GEOMETRY_DIR}/EdgeExtractor.cpp)
+    ${GEOMETRY_DIR}/PrecomputedEdgeData.cpp)
 
 set(RAYTRACING_SOURCES
     ${RAYTRACING_DIR}/RayLauncher.cpp

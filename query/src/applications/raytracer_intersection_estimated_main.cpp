@@ -24,6 +24,7 @@
 #include "common.h"
 #include "../optix/OptixHelpers.h"
 #include "../raytracing/MeshIntersectionLauncher.h"
+#include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
 #include "../cuda/estimated_intersection.h"
@@ -38,8 +39,8 @@ QueryResults executeHashQuery(
     MeshIntersectionLauncher& intersectionLauncher,
     MeshIntersectionLaunchParams& params1,
     MeshIntersectionLaunchParams& params2,
-    int mesh1NumTriangles,
-    int mesh2NumTriangles,
+    int mesh1NumEdges,
+    int mesh2NumEdges,
     unsigned long long* d_hash_table,
     int hash_table_size,
     PerformanceTimer* timer = nullptr,
@@ -57,7 +58,7 @@ QueryResults executeHashQuery(
     params2.hash_table_size = hash_table_size;
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    intersectionLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+    intersectionLauncher.launchMesh1ToMesh2(params1, mesh1NumEdges);
     auto t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -67,7 +68,7 @@ QueryResults executeHashQuery(
     }
 
     t0 = std::chrono::high_resolution_clock::now();
-    intersectionLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    intersectionLauncher.launchMesh2ToMesh1(params2, mesh2NumEdges);
     t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -173,12 +174,18 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error loading mesh1." << std::endl;
         return 1;
     }
+    if (!requirePrecomputedEdges(mesh1, mesh1Path, "Mesh1")) {
+        return 1;
+    }
     
     timer.next("Load Mesh2");
     GeometryData mesh2 = loadGeometryFromFile(mesh2Path);
     
     if (mesh2.vertices.empty()) {
         std::cerr << "Error loading mesh2." << std::endl;
+        return 1;
+    }
+    if (!requirePrecomputedEdges(mesh2, mesh2Path, "Mesh2")) {
         return 1;
     }
 
@@ -309,6 +316,10 @@ int main(int argc, char* argv[]) {
 
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
+    EdgeMeshData mesh1EdgeData = PrecomputedEdgeData::uploadFromGeometry(mesh1);
+    EdgeMeshData mesh2EdgeData = PrecomputedEdgeData::uploadFromGeometry(mesh2);
+    int mesh1NumEdges = mesh1EdgeData.num_edges;
+    int mesh2NumEdges = mesh2EdgeData.num_edges;
 
     // Allocate Hash Table
     unsigned long long* d_hash_table = nullptr;
@@ -348,6 +359,12 @@ int main(int argc, char* argv[]) {
     params1.mesh1_triangle_to_object = mesh1Uploader.getTriangleToObject();
     params1.mesh1_num_triangles = mesh1NumTriangles;
     params1.mesh1_num_objects = mesh1NumObjects;
+    params1.edge_starts = mesh1EdgeData.d_edge_starts;
+    params1.edge_ends = mesh1EdgeData.d_edge_ends;
+    params1.edge_source_object_counts = mesh1EdgeData.d_source_object_counts;
+    params1.edge_source_objects = mesh1EdgeData.d_source_objects;
+    params1.edge_source_object_offsets = mesh1EdgeData.d_source_object_offsets;
+    params1.num_edges = mesh1NumEdges;
     params1.mesh2_handle = mesh2AS.getHandle();
     params1.mesh2_vertices = mesh2Uploader.getVertices();
     params1.mesh2_indices = mesh2Uploader.getIndices();
@@ -360,6 +377,12 @@ int main(int argc, char* argv[]) {
     params2.mesh1_triangle_to_object = mesh2Uploader.getTriangleToObject();
     params2.mesh1_num_triangles = mesh2NumTriangles;
     params2.mesh1_num_objects = mesh2NumObjects;
+    params2.edge_starts = mesh2EdgeData.d_edge_starts;
+    params2.edge_ends = mesh2EdgeData.d_edge_ends;
+    params2.edge_source_object_counts = mesh2EdgeData.d_source_object_counts;
+    params2.edge_source_objects = mesh2EdgeData.d_source_objects;
+    params2.edge_source_object_offsets = mesh2EdgeData.d_source_object_offsets;
+    params2.num_edges = mesh2NumEdges;
     params2.mesh2_handle = mesh1AS.getHandle();
     params2.mesh2_vertices = mesh1Uploader.getVertices();
     params2.mesh2_indices = mesh1Uploader.getIndices();
@@ -382,7 +405,7 @@ int main(int argc, char* argv[]) {
 
     QueryResults results = executeHashQuery(
         intersectionLauncher, params1, params2,
-        mesh1NumTriangles, mesh2NumTriangles,
+        mesh1NumEdges, mesh2NumEdges,
         d_hash_table, hash_table_size,
         &timer
     );
@@ -398,6 +421,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(results.d_merged_results));
     CUDA_CHECK(cudaFree(d_first_triangle_mesh1));
     CUDA_CHECK(cudaFree(d_first_triangle_mesh2));
+    PrecomputedEdgeData::freeEdgeData(mesh1EdgeData);
+    PrecomputedEdgeData::freeEdgeData(mesh2EdgeData);
 
     mesh1Uploader.free();
     mesh2Uploader.free();

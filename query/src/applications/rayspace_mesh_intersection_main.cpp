@@ -23,6 +23,7 @@
 #include "common.h"
 #include "../optix/OptixHelpers.h"
 #include "../raytracing/MeshIntersectionLauncher.h"
+#include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
 
@@ -37,8 +38,8 @@ QueryResults executeSplitQuery(
     MeshIntersectionLauncher& intersectionLauncher,
     MeshIntersectionLaunchParams& params1,
     MeshIntersectionLaunchParams& params2,
-    int mesh1NumTriangles,
-    int mesh2NumTriangles,
+    int mesh1NumEdges,
+    int mesh2NumEdges,
     int mesh1NumObjects,
     int mesh2NumObjects,
     PerformanceTimer* timer = nullptr,
@@ -56,10 +57,10 @@ QueryResults executeSplitQuery(
     long long* d_overlap_offsets1 = nullptr;
     long long* d_overlap_offsets2 = nullptr;
 
-    CUDA_CHECK(cudaMalloc(&d_overlap_counts1, (size_t)mesh1NumTriangles * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_overlap_counts2, (size_t)mesh2NumTriangles * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_overlap_offsets1, (size_t)mesh1NumTriangles * sizeof(long long)));
-    CUDA_CHECK(cudaMalloc(&d_overlap_offsets2, (size_t)mesh2NumTriangles * sizeof(long long)));
+    CUDA_CHECK(cudaMalloc(&d_overlap_counts1, (size_t)mesh1NumEdges * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_overlap_counts2, (size_t)mesh2NumEdges * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_overlap_offsets1, (size_t)mesh1NumEdges * sizeof(long long)));
+    CUDA_CHECK(cudaMalloc(&d_overlap_offsets2, (size_t)mesh2NumEdges * sizeof(long long)));
 
     params1.collision_counts = d_overlap_counts1;
     params1.collision_offsets = nullptr;
@@ -72,7 +73,7 @@ QueryResults executeSplitQuery(
     params2.pass = 1;
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    intersectionLauncher.launchOverlapMesh1ToMesh2(params1, mesh1NumTriangles);
+    intersectionLauncher.launchOverlapMesh1ToMesh2(params1, mesh1NumEdges);
     auto t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -82,7 +83,7 @@ QueryResults executeSplitQuery(
     }
 
     t0 = std::chrono::high_resolution_clock::now();
-    intersectionLauncher.launchOverlapMesh2ToMesh1(params2, mesh2NumTriangles);
+    intersectionLauncher.launchOverlapMesh2ToMesh1(params2, mesh2NumEdges);
     t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -91,8 +92,8 @@ QueryResults executeSplitQuery(
         );
     }
 
-    long long overlapResults1 = exclusive_scan_gpu(d_overlap_counts1, d_overlap_offsets1, mesh1NumTriangles);
-    long long overlapResults2 = exclusive_scan_gpu(d_overlap_counts2, d_overlap_offsets2, mesh2NumTriangles);
+    long long overlapResults1 = exclusive_scan_gpu(d_overlap_counts1, d_overlap_offsets1, mesh1NumEdges);
+    long long overlapResults2 = exclusive_scan_gpu(d_overlap_counts2, d_overlap_offsets2, mesh2NumEdges);
     long long totalOverlapResults = overlapResults1 + overlapResults2;
 
     MeshQueryResult* d_overlap_pairs = nullptr;
@@ -111,7 +112,7 @@ QueryResults executeSplitQuery(
     params2.pass = 2;
 
     t0 = std::chrono::high_resolution_clock::now();
-    intersectionLauncher.launchOverlapMesh1ToMesh2(params1, mesh1NumTriangles);
+    intersectionLauncher.launchOverlapMesh1ToMesh2(params1, mesh1NumEdges);
     t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -121,7 +122,7 @@ QueryResults executeSplitQuery(
     }
 
     t0 = std::chrono::high_resolution_clock::now();
-    intersectionLauncher.launchOverlapMesh2ToMesh1(params2, mesh2NumTriangles);
+    intersectionLauncher.launchOverlapMesh2ToMesh1(params2, mesh2NumEdges);
     t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -330,6 +331,9 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: Failed to load Mesh1 from " << mesh1Path << std::endl;
         return 1;
     }
+    if (!requirePrecomputedEdges(mesh1Data, mesh1Path, "Mesh1")) {
+        return 1;
+    }
     std::cout << "Mesh1 loaded: " << mesh1Data.vertices.size() << " vertices, " 
               << mesh1Data.indices.size() << " triangles" << std::endl;
     
@@ -338,6 +342,9 @@ int main(int argc, char* argv[]) {
     GeometryData mesh2Data = loadGeometryFromFile(mesh2Path);
     if (mesh2Data.vertices.empty()) {
         std::cerr << "Error: Failed to load Mesh2 from " << mesh2Path << std::endl;
+        return 1;
+    }
+    if (!requirePrecomputedEdges(mesh2Data, mesh2Path, "Mesh2")) {
         return 1;
     }
     std::cout << "Mesh2 loaded: " << mesh2Data.vertices.size() << " vertices, " 
@@ -374,6 +381,11 @@ int main(int argc, char* argv[]) {
     
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
+
+    EdgeMeshData mesh1EdgeData = PrecomputedEdgeData::uploadFromGeometry(mesh1Data);
+    EdgeMeshData mesh2EdgeData = PrecomputedEdgeData::uploadFromGeometry(mesh2Data);
+    int mesh1NumEdges = mesh1EdgeData.num_edges;
+    int mesh2NumEdges = mesh2EdgeData.num_edges;
     
     std::vector<int> firstTriangleMesh1(mesh1NumObjects, -1);
     std::vector<int> firstTriangleMesh2(mesh2NumObjects, -1);
@@ -403,6 +415,12 @@ int main(int argc, char* argv[]) {
     params1.mesh1_triangle_to_object = mesh1Uploader.getTriangleToObject();
     params1.mesh1_num_triangles = mesh1NumTriangles;
     params1.mesh1_num_objects = mesh1NumObjects;
+    params1.edge_starts = mesh1EdgeData.d_edge_starts;
+    params1.edge_ends = mesh1EdgeData.d_edge_ends;
+    params1.edge_source_object_counts = mesh1EdgeData.d_source_object_counts;
+    params1.edge_source_objects = mesh1EdgeData.d_source_objects;
+    params1.edge_source_object_offsets = mesh1EdgeData.d_source_object_offsets;
+    params1.num_edges = mesh1NumEdges;
     params1.mesh2_handle = mesh2AS.getHandle();
     params1.mesh2_vertices = mesh2Uploader.getVertices();
     params1.mesh2_indices = mesh2Uploader.getIndices();
@@ -425,6 +443,12 @@ int main(int argc, char* argv[]) {
     params2.mesh1_triangle_to_object = mesh2Uploader.getTriangleToObject();
     params2.mesh1_num_triangles = mesh2NumTriangles;
     params2.mesh1_num_objects = mesh2NumObjects;
+    params2.edge_starts = mesh2EdgeData.d_edge_starts;
+    params2.edge_ends = mesh2EdgeData.d_edge_ends;
+    params2.edge_source_object_counts = mesh2EdgeData.d_source_object_counts;
+    params2.edge_source_objects = mesh2EdgeData.d_source_objects;
+    params2.edge_source_object_offsets = mesh2EdgeData.d_source_object_offsets;
+    params2.num_edges = mesh2NumEdges;
     params2.mesh2_handle = mesh1AS.getHandle();
     params2.mesh2_vertices = mesh1Uploader.getVertices();
     params2.mesh2_indices = mesh1Uploader.getIndices();
@@ -447,7 +471,7 @@ int main(int argc, char* argv[]) {
         for (int warmup = 0; warmup < warmupRuns; ++warmup) {
             QueryResults warmupResults = executeSplitQuery(
                 intersectionLauncher, params1, params2,
-                mesh1NumTriangles, mesh2NumTriangles,
+                mesh1NumEdges, mesh2NumEdges,
                 mesh1NumObjects, mesh2NumObjects,
                 nullptr,
                 false
@@ -461,7 +485,7 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Executing mesh intersection detection (split overlap + containment) ===" << std::endl;
         QueryResults queryResults = executeSplitQuery(
             intersectionLauncher, params1, params2,
-            mesh1NumTriangles, mesh2NumTriangles,
+            mesh1NumEdges, mesh2NumEdges,
             mesh1NumObjects, mesh2NumObjects,
             &timer,
             true
@@ -507,6 +531,8 @@ int main(int argc, char* argv[]) {
     if (d_merged_results) CUDA_CHECK(cudaFree(d_merged_results));
     if (d_first_triangle_mesh1) CUDA_CHECK(cudaFree(d_first_triangle_mesh1));
     if (d_first_triangle_mesh2) CUDA_CHECK(cudaFree(d_first_triangle_mesh2));
+    PrecomputedEdgeData::freeEdgeData(mesh1EdgeData);
+    PrecomputedEdgeData::freeEdgeData(mesh2EdgeData);
     
     timer.finish(outputJsonPath);
     

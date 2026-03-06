@@ -22,6 +22,7 @@
 #include "common.h"
 #include "../optix/OptixHelpers.h"
 #include "../raytracing/MeshContainmentLauncher.h"
+#include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
 
@@ -103,6 +104,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Loading dataset A from: " << meshAPath << std::endl;
     GeometryData meshAData = loadGeometryFromFile(meshAPath);
     if (meshAData.vertices.empty()) { std::cerr << "Failed to load A\n"; return 1; }
+    if (!requirePrecomputedEdges(meshAData, meshAPath, "MeshA")) { return 1; }
     std::cout << "  A: " << meshAData.vertices.size() << " vertices, "
               << meshAData.indices.size() << " triangles" << std::endl;
 
@@ -110,6 +112,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Loading dataset B from: " << meshBPath << std::endl;
     GeometryData meshBData = loadGeometryFromFile(meshBPath);
     if (meshBData.vertices.empty()) { std::cerr << "Failed to load B\n"; return 1; }
+    if (!requirePrecomputedEdges(meshBData, meshBPath, "MeshB")) { return 1; }
     std::cout << "  B: " << meshBData.vertices.size() << " vertices, "
               << meshBData.indices.size() << " triangles" << std::endl;
 
@@ -146,6 +149,10 @@ int main(int argc, char* argv[]) {
 
     int aNumTriangles = static_cast<int>(aUploader.getNumIndices());
     int bNumTriangles = static_cast<int>(bUploader.getNumIndices());
+    EdgeMeshData aEdgeData = PrecomputedEdgeData::uploadFromGeometry(meshAData);
+    EdgeMeshData bEdgeData = PrecomputedEdgeData::uploadFromGeometry(meshBData);
+    int aNumEdges = aEdgeData.num_edges;
+    int bNumEdges = bEdgeData.num_edges;
 
     std::vector<float3> bFirstVertices(numBObjects);
     {
@@ -187,10 +194,12 @@ int main(int argc, char* argv[]) {
         MeshContainmentLaunchParams params{};
 
         // Phase 1a: B edges → A
-        params.src_vertices            = bUploader.getVertices();
-        params.src_indices             = bUploader.getIndices();
-        params.src_triangle_to_object  = bUploader.getTriangleToObject();
-        params.src_num_triangles       = bNumTriangles;
+        params.src_edge_starts             = bEdgeData.d_edge_starts;
+        params.src_edge_ends               = bEdgeData.d_edge_ends;
+        params.src_edge_source_object_counts = bEdgeData.d_source_object_counts;
+        params.src_edge_source_objects       = bEdgeData.d_source_objects;
+        params.src_edge_source_object_offsets = bEdgeData.d_source_object_offsets;
+        params.src_num_edges               = bNumEdges;
         params.target_handle           = aAS.getHandle();
         params.target_triangle_to_object = aUploader.getTriangleToObject();
         params.intersection_hash_table      = d_intersectionHT;
@@ -201,18 +210,20 @@ int main(int argc, char* argv[]) {
         params.containment_hash_table       = d_containmentHT;
         params.containment_hash_table_size  = containmentHTSize;
 
-        launcher.launchEdgeCheck(params, bNumTriangles);
+        launcher.launchEdgeCheck(params, bNumEdges);
 
         // Phase 1b: A edges → B
-        params.src_vertices            = aUploader.getVertices();
-        params.src_indices             = aUploader.getIndices();
-        params.src_triangle_to_object  = aUploader.getTriangleToObject();
-        params.src_num_triangles       = aNumTriangles;
+        params.src_edge_starts             = aEdgeData.d_edge_starts;
+        params.src_edge_ends               = aEdgeData.d_edge_ends;
+        params.src_edge_source_object_counts = aEdgeData.d_source_object_counts;
+        params.src_edge_source_objects       = aEdgeData.d_source_objects;
+        params.src_edge_source_object_offsets = aEdgeData.d_source_object_offsets;
+        params.src_num_edges               = aNumEdges;
         params.target_handle           = bAS.getHandle();
         params.target_triangle_to_object = bUploader.getTriangleToObject();
         params.swap_ids                = 1;
 
-        launcher.launchEdgeCheck(params, aNumTriangles);
+        launcher.launchEdgeCheck(params, aNumEdges);
 
         // Phase 2: Point-in-mesh
         params.target_handle             = aAS.getHandle();
@@ -292,6 +303,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_intersectionHT));
     CUDA_CHECK(cudaFree(d_containmentHT));
     CUDA_CHECK(cudaFree(d_bFirstVertices));
+    PrecomputedEdgeData::freeEdgeData(aEdgeData);
+    PrecomputedEdgeData::freeEdgeData(bEdgeData);
 
     timer.finish(outputJsonPath);
 

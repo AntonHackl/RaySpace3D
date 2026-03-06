@@ -5,11 +5,13 @@
 #include <cuda_runtime.h>
 
 struct MeshContainmentLaunchParams {
-    // Source mesh data (edges to cast)
-    float3* src_vertices;
-    uint3*  src_indices;
-    int*    src_triangle_to_object;
-    int     src_num_triangles;
+    // Source precomputed edges (Phase 1 rays)
+    float3* src_edge_starts;
+    float3* src_edge_ends;
+    int*    src_edge_source_object_counts;
+    int*    src_edge_source_objects;
+    int*    src_edge_source_object_offsets;
+    int     src_num_edges;
 
     // Target mesh acceleration structure (to trace against)
     OptixTraversableHandle target_handle;

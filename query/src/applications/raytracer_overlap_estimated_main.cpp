@@ -23,7 +23,8 @@
 #include "scan_utils.h"
 #include "common.h"
 #include "../optix/OptixHelpers.h"
-#include "../raytracing/MeshOverlapLauncher.h"
+#include "../raytracing/MeshOverlapEdgesLauncher.h"
+#include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
 #include "../cuda/estimated_overlap.h"
@@ -35,11 +36,11 @@ struct QueryResults {
 
 // Execute the overlap query using hash table deduplication
 QueryResults executeHashQuery(
-    MeshOverlapLauncher& overlapLauncher,
-    MeshOverlapLaunchParams& params1,
-    MeshOverlapLaunchParams& params2,
-    int mesh1NumTriangles,
-    int mesh2NumTriangles,
+    MeshOverlapEdgesLauncher& edgesLauncher,
+    MeshOverlapEdgesLaunchParams& edgesParams1,
+    MeshOverlapEdgesLaunchParams& edgesParams2,
+    int mesh1NumEdges,
+    int mesh2NumEdges,
     unsigned long long* d_hash_table,
     unsigned long long hash_table_size,
     long long estimated_pairs,
@@ -50,18 +51,18 @@ QueryResults executeHashQuery(
     CUDA_CHECK(cudaMemset(d_hash_table, 0xFF, hash_table_size * sizeof(unsigned long long)));
     
     // Ensure params use hash table with bitwise optimisation (table size is power-of-two)
-    params1.use_hash_table = true;
-    params1.use_bitwise_hash = true;
-    params1.hash_table = d_hash_table;
-    params1.hash_table_size = hash_table_size;
+    edgesParams1.use_hash_table = true;
+    edgesParams1.use_bitwise_hash = true;
+    edgesParams1.hash_table = d_hash_table;
+    edgesParams1.hash_table_size = hash_table_size;
     
-    params2.use_hash_table = true;
-    params2.use_bitwise_hash = true;
-    params2.hash_table = d_hash_table;
-    params2.hash_table_size = hash_table_size;
+    edgesParams2.use_hash_table = true;
+    edgesParams2.use_bitwise_hash = true;
+    edgesParams2.hash_table = d_hash_table;
+    edgesParams2.hash_table_size = hash_table_size;
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
+    edgesLauncher.launchMesh1ToMesh2(edgesParams1, mesh1NumEdges);
     auto t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -71,7 +72,7 @@ QueryResults executeHashQuery(
     }
 
     t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
+    edgesLauncher.launchMesh2ToMesh1(edgesParams2, mesh2NumEdges);
     t1 = std::chrono::high_resolution_clock::now();
     if (timer) {
         timer->addMeasurement(
@@ -83,7 +84,7 @@ QueryResults executeHashQuery(
     // Use estimated pairs to size the output buffer, with a fallback and a safety factor
     long long safe_estimate = (estimated_pairs > 0) ? (long long)(estimated_pairs * 1.2) : (long long)hash_table_size;
     // Ensure we don't allocate ridiculously small if estimate is off, utilize triangle count heuristic as floor
-    long long triangle_heuristic = (long long)std::max(mesh1NumTriangles, mesh2NumTriangles) * 2;
+    long long triangle_heuristic = (long long)std::max(mesh1NumEdges, mesh2NumEdges) * 2;
     
     long long max_output_long = std::max(safe_estimate, triangle_heuristic);
     if (max_output_long < 2000000) max_output_long = 2000000;
@@ -230,12 +231,18 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error loading mesh1." << std::endl;
         return 1;
     }
+    if (!requirePrecomputedEdges(mesh1, mesh1Path, "Mesh1")) {
+        return 1;
+    }
     
     timer.next("Load Mesh2");
     GeometryData mesh2 = loadGeometryFromFile(mesh2Path);
     
     if (mesh2.vertices.empty()) {
         std::cerr << "Error loading mesh2." << std::endl;
+        return 1;
+    }
+    if (!requirePrecomputedEdges(mesh2, mesh2Path, "Mesh2")) {
         return 1;
     }
 
@@ -325,7 +332,7 @@ int main(int argc, char* argv[]) {
     timer.next("Init OptiX");
     OptixContext context;
     OptixPipelineManager basePipeline(context, ptxPath);
-    MeshOverlapLauncher overlapLauncher(context, basePipeline);
+    MeshOverlapEdgesLauncher edgesLauncher(context, basePipeline);
 
     timer.next("Upload Mesh1");
     GeometryUploader mesh1Uploader;
@@ -347,25 +354,34 @@ int main(int argc, char* argv[]) {
     int mesh1NumTriangles = static_cast<int>(mesh1Uploader.getNumIndices());
     int mesh2NumTriangles = static_cast<int>(mesh2Uploader.getNumIndices());
 
-    MeshOverlapLaunchParams params1 = {};
-    params1.mesh1_vertices = mesh1Uploader.getVertices();
-    params1.mesh1_indices = (uint3*)mesh1Uploader.getIndices();
-    params1.mesh1_triangle_to_object = mesh1Uploader.getTriangleToObject();
-    params1.mesh1_num_triangles = mesh1NumTriangles;
-    params1.mesh2_handle = mesh2AS.getHandle();
-    params1.mesh2_vertices = mesh2Uploader.getVertices();
-    params1.mesh2_indices = (uint3*)mesh2Uploader.getIndices();
-    params1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
+    EdgeMeshData mesh1EdgeData = PrecomputedEdgeData::uploadFromGeometry(mesh1);
+    EdgeMeshData mesh2EdgeData = PrecomputedEdgeData::uploadFromGeometry(mesh2);
+    int mesh1NumEdges = mesh1EdgeData.num_edges;
+    int mesh2NumEdges = mesh2EdgeData.num_edges;
 
-    MeshOverlapLaunchParams params2 = {};
-    params2.mesh1_vertices = mesh2Uploader.getVertices();
-    params2.mesh1_indices = (uint3*)mesh2Uploader.getIndices();
-    params2.mesh1_triangle_to_object = mesh2Uploader.getTriangleToObject();
-    params2.mesh1_num_triangles = mesh2NumTriangles;
-    params2.mesh2_handle = mesh1AS.getHandle();
-    params2.mesh2_vertices = mesh1Uploader.getVertices();
-    params2.mesh2_indices = (uint3*)mesh1Uploader.getIndices();
-    params2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
+    MeshOverlapEdgesLaunchParams edgesParams1 = {};
+    edgesParams1.edge_starts = mesh1EdgeData.d_edge_starts;
+    edgesParams1.edge_ends = mesh1EdgeData.d_edge_ends;
+    edgesParams1.edge_source_object_counts = mesh1EdgeData.d_source_object_counts;
+    edgesParams1.edge_source_objects = mesh1EdgeData.d_source_objects;
+    edgesParams1.edge_source_object_offsets = mesh1EdgeData.d_source_object_offsets;
+    edgesParams1.num_edges = mesh1NumEdges;
+    edgesParams1.mesh2_handle = mesh2AS.getHandle();
+    edgesParams1.mesh2_vertices = mesh2Uploader.getVertices();
+    edgesParams1.mesh2_indices = (uint3*)mesh2Uploader.getIndices();
+    edgesParams1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
+
+    MeshOverlapEdgesLaunchParams edgesParams2 = {};
+    edgesParams2.edge_starts = mesh2EdgeData.d_edge_starts;
+    edgesParams2.edge_ends = mesh2EdgeData.d_edge_ends;
+    edgesParams2.edge_source_object_counts = mesh2EdgeData.d_source_object_counts;
+    edgesParams2.edge_source_objects = mesh2EdgeData.d_source_objects;
+    edgesParams2.edge_source_object_offsets = mesh2EdgeData.d_source_object_offsets;
+    edgesParams2.num_edges = mesh2NumEdges;
+    edgesParams2.mesh2_handle = mesh1AS.getHandle();
+    edgesParams2.mesh2_vertices = mesh1Uploader.getVertices();
+    edgesParams2.mesh2_indices = (uint3*)mesh1Uploader.getIndices();
+    edgesParams2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
 
     timer.next("Warmup");
     if (warmupRuns > 0) {
@@ -377,11 +393,11 @@ int main(int argc, char* argv[]) {
             CUDA_CHECK(cudaMalloc(&d_warmup_hash_table, warmupHashSize * sizeof(unsigned long long)));
 
             QueryResults warmupResults = executeHashQuery(
-                overlapLauncher,
-                params1,
-                params2,
-                mesh1NumTriangles,
-                mesh2NumTriangles,
+                edgesLauncher,
+                edgesParams1,
+                edgesParams2,
+                mesh1NumEdges,
+                mesh2NumEdges,
                 d_warmup_hash_table,
                 warmupHashSize,
                 warmupEstimatedPairs,
@@ -412,11 +428,11 @@ int main(int argc, char* argv[]) {
 
         timer.next("Execute Hash Query");
         QueryResults queryResults = executeHashQuery(
-            overlapLauncher,
-            params1,
-            params2,
-            mesh1NumTriangles,
-            mesh2NumTriangles,
+            edgesLauncher,
+            edgesParams1,
+            edgesParams2,
+            mesh1NumEdges,
+            mesh2NumEdges,
             d_hash_table,
             hash_table_size,
             estimatedPairs,
@@ -439,6 +455,8 @@ int main(int argc, char* argv[]) {
     }
 
     timer.next("Cleanup");
+    PrecomputedEdgeData::freeEdgeData(mesh1EdgeData);
+    PrecomputedEdgeData::freeEdgeData(mesh2EdgeData);
 
     std::set<int> mesh1UniqueObjects(mesh1.triangleToObject.begin(), mesh1.triangleToObject.end());
     int mesh1NumObjects = mesh1UniqueObjects.size();

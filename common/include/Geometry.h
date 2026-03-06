@@ -20,11 +20,32 @@ struct GridData {
     bool hasGrid = false;
 };
 
+struct EdgeData {
+    std::vector<float3, PinnedAllocator<float3>> edgeStarts;
+    std::vector<float3, PinnedAllocator<float3>> edgeEnds;
+    std::vector<int, PinnedAllocator<int>> sourceObjects;
+    std::vector<int, PinnedAllocator<int>> sourceObjectOffsets;
+    std::vector<int, PinnedAllocator<int>> sourceObjectCounts;
+
+    bool hasEdges() const {
+        return !edgeStarts.empty() &&
+               edgeStarts.size() == edgeEnds.size() &&
+               edgeStarts.size() == sourceObjectOffsets.size() &&
+               edgeStarts.size() == sourceObjectCounts.size();
+    }
+
+    size_t numEdges() const {
+        return edgeStarts.size();
+    }
+};
+
 struct GeometryData {
     std::vector<float3, PinnedAllocator<float3>> vertices;
     std::vector<uint3, PinnedAllocator<uint3>> indices;
     std::vector<int, PinnedAllocator<int>> triangleToObject;
     size_t totalTriangles = 0;
+
+    EdgeData edges;
     
     GridData grid;
 };

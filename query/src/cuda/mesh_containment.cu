@@ -77,51 +77,48 @@ __device__ bool cont_lookup_table(const unsigned long long* table, int size,
 extern "C" __global__ void __raygen__check_edges() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
-    const int triangleIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
+    const int edgeIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
 
-    if (triangleIdx >= containment_params.src_num_triangles) return;
+    if (edgeIdx >= containment_params.src_num_edges) return;
 
-    uint3 tri = containment_params.src_indices[triangleIdx];
-    float3 v0 = containment_params.src_vertices[tri.x];
-    float3 v1 = containment_params.src_vertices[tri.y];
-    float3 v2 = containment_params.src_vertices[tri.z];
-
-    int src_obj = containment_params.src_triangle_to_object[triangleIdx];
-
-    float3 edgeStarts[3] = {v0, v1, v2};
-    float3 edgeEnds[3]   = {v1, v2, v0};
+    const float3 edgeStart = containment_params.src_edge_starts[edgeIdx];
+    const float3 edgeEnd = containment_params.src_edge_ends[edgeIdx];
+    const int numSourceObjects = containment_params.src_edge_source_object_counts[edgeIdx];
+    const int sourceOffset = containment_params.src_edge_source_object_offsets[edgeIdx];
+    const int* sourceObjectIds = &containment_params.src_edge_source_objects[sourceOffset];
 
     const float epsilon = 1e-6f;
 
-    for (int e = 0; e < 3; ++e) {
-        float3 dir = make_float3(edgeEnds[e].x - edgeStarts[e].x,
-                                 edgeEnds[e].y - edgeStarts[e].y,
-                                 edgeEnds[e].z - edgeStarts[e].z);
-        float edgeLen = cont_distance3f(edgeStarts[e], edgeEnds[e]);
-        if (edgeLen < epsilon) continue;
+    float3 dir = make_float3(edgeEnd.x - edgeStart.x,
+                             edgeEnd.y - edgeStart.y,
+                             edgeEnd.z - edgeStart.z);
+    float edgeLen = cont_distance3f(edgeStart, edgeEnd);
+    if (edgeLen < epsilon) return;
 
-        float3 normDir = cont_normalize3f(dir);
+    float3 normDir = cont_normalize3f(dir);
 
-        unsigned int hitFlag      = 0;
-        unsigned int distBits     = __float_as_uint(edgeLen + epsilon);
-        unsigned int triangleIndex = 0;
+    unsigned int hitFlag = 0;
+    unsigned int distBits = __float_as_uint(edgeLen + epsilon);
+    unsigned int triangleIndex = 0;
 
-        optixTrace(
-            containment_params.target_handle,
-            edgeStarts[e],
-            normDir,
-            epsilon,
-            edgeLen + epsilon,
-            0.0f,
-            OptixVisibilityMask(255),
-            OPTIX_RAY_FLAG_NONE,
-            0, 1, 0,
-            hitFlag, distBits, triangleIndex);
+    optixTrace(
+        containment_params.target_handle,
+        edgeStart,
+        normDir,
+        epsilon,
+        edgeLen + epsilon,
+        0.0f,
+        OptixVisibilityMask(255),
+        OPTIX_RAY_FLAG_NONE,
+        0, 1, 0,
+        hitFlag, distBits, triangleIndex);
 
-        float t = __uint_as_float(distBits);
-        if (hitFlag && t >= epsilon && t <= edgeLen + epsilon) {
-            int hit_obj = containment_params.target_triangle_to_object[triangleIndex];
+    float t = __uint_as_float(distBits);
+    if (hitFlag && t >= epsilon && t <= edgeLen + epsilon) {
+        int hit_obj = containment_params.target_triangle_to_object[triangleIndex];
 
+        for (int i = 0; i < numSourceObjects; ++i) {
+            const int src_obj = sourceObjectIds[i];
             // Always store as (A_obj, B_obj) regardless of direction
             if (containment_params.swap_ids == 0) {
                 // B→A: src=B, hit=A  → (A=hit, B=src)

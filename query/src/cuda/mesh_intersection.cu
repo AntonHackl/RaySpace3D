@@ -209,59 +209,48 @@ __device__ int collect_containing_target_objects(const float3& point, int* outOb
 extern "C" __global__ void __raygen__mesh_overlap() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
-    const int triangleIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
+    const int edgeIdx = idx.x + idx.y * dim.x + idx.z * dim.x * dim.y;
     
-    if (triangleIdx >= mesh_intersection_params.mesh1_num_triangles) {
+    if (edgeIdx >= mesh_intersection_params.num_edges) {
         return;
     }
-    
-    uint3 triIndices = mesh_intersection_params.mesh1_indices[triangleIdx];
-    
-    float3 v0 = mesh_intersection_params.mesh1_vertices[triIndices.x];
-    float3 v1 = mesh_intersection_params.mesh1_vertices[triIndices.y];
-    float3 v2 = mesh_intersection_params.mesh1_vertices[triIndices.z];
-    
-    int sourceObjectId = mesh_intersection_params.mesh1_triangle_to_object[triangleIdx];
-    
-    float3 edgeStarts[3] = {v0, v1, v2};
-    float3 edgeEnds[3] = {v1, v2, v0};
+
+    const float3 edgeStart = mesh_intersection_params.edge_starts[edgeIdx];
+    const float3 edgeEnd = mesh_intersection_params.edge_ends[edgeIdx];
+    const int numSourceObjects = mesh_intersection_params.edge_source_object_counts[edgeIdx];
+    const int sourceOffset = mesh_intersection_params.edge_source_object_offsets[edgeIdx];
+    const int* sourceObjectIds = &mesh_intersection_params.edge_source_objects[sourceOffset];
     
     const float epsilon = 1e-6f;
     int totalHits = 0;
     long long writeCursor = 0;
     if (!mesh_intersection_params.use_hash_table && mesh_intersection_params.pass == 2) {
-        writeCursor = mesh_intersection_params.collision_offsets[triangleIdx];
+        writeCursor = mesh_intersection_params.collision_offsets[edgeIdx];
     }
-    
-    // Test all edges first
-    for (int edgeIdx = 0; edgeIdx < 3; ++edgeIdx) {
-        float3 edgeStart = edgeStarts[edgeIdx];
-        float3 edgeEnd = edgeEnds[edgeIdx];
-        
-        float3 edgeDir = make_float3(edgeEnd.x - edgeStart.x, 
-                                     edgeEnd.y - edgeStart.y, 
-                                     edgeEnd.z - edgeStart.z);
-        float edgeLength = distance3f(edgeStart, edgeEnd);
-        
-        if (edgeLength < epsilon) {
-            continue;
-        }
 
+    float3 edgeDir = make_float3(edgeEnd.x - edgeStart.x,
+                                 edgeEnd.y - edgeStart.y,
+                                 edgeEnd.z - edgeStart.z);
+    float edgeLength = distance3f(edgeStart, edgeEnd);
+
+    if (edgeLength >= epsilon) {
         float3 normalizedDir = normalize3f(edgeDir);
-        int hitsFound = trace_edge_multi_hits(
-            edgeStart,
-            normalizedDir,
-            edgeLength,
-            sourceObjectId,
-            mesh_intersection_params.swap_result_ids != 0,
-            writeCursor,
-            epsilon);
-
-        totalHits += hitsFound;
+        for (int i = 0; i < numSourceObjects; ++i) {
+            const int sourceObjectId = sourceObjectIds[i];
+            int hitsFound = trace_edge_multi_hits(
+                edgeStart,
+                normalizedDir,
+                edgeLength,
+                sourceObjectId,
+                mesh_intersection_params.swap_result_ids != 0,
+                writeCursor,
+                epsilon);
+            totalHits += hitsFound;
+        }
     }
 
     if (!mesh_intersection_params.use_hash_table && mesh_intersection_params.pass == 1) {
-        mesh_intersection_params.collision_counts[triangleIdx] = totalHits;
+        mesh_intersection_params.collision_counts[edgeIdx] = totalHits;
     }
 }
 

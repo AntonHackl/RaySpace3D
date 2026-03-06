@@ -58,6 +58,7 @@ set(TDBASE_SOURCES
 
 # Dataset loader sources
 set(DATASET_SOURCES
+    src/EdgePreprocessor.cpp
     src/DatasetLoaderFactory.cpp
     src/PolygonDatasetLoader.cpp
     src/ObjMeshDatasetLoader.cpp

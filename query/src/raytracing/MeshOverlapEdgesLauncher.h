@@ -3,7 +3,7 @@
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../cuda/mesh_overlap.h"
-#include "../geometry/EdgeExtractor.h"
+#include "../geometry/PrecomputedEdgeData.h"
 #include "../optix/OptixHelpers.h"
 #include <optix.h>
 

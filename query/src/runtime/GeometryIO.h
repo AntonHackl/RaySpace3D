@@ -5,3 +5,6 @@
 
 // Load preprocessed geometry from a binary file created by preprocess_dataset
 GeometryData loadGeometryFromFile(const std::string& geometryFilePath);
+
+// Enforce that geometry carries precomputed edges in .pre payload.
+bool requirePrecomputedEdges(const GeometryData& geometry, const std::string& geometryPath, const char* meshLabel);

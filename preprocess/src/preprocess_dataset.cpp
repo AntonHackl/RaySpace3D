@@ -16,6 +16,7 @@
 #include "../../common/include/Geometry.h"
 #include "../../common/include/BinaryIO.h"
 #include "DatasetLoaderFactory.h"
+#include "EdgePreprocessor.h"
 #include "timer.h"
 
 void writeGeometryDataToFile(const GeometryData& geometry, const std::string& filename) {
@@ -345,6 +346,19 @@ int main(int argc, char* argv[]) {
         generateGridStats(geometry, geometry.grid, gridResolution, worldSize);
     }
 
+    timer.next("Extracting Edges");
+    geometry.edges = EdgePreprocessor::extractEdges(
+        geometry.indices,
+        geometry.triangleToObject,
+        geometry.vertices
+    );
+    if (!geometry.edges.hasEdges()) {
+        std::cerr << "Error: Edge extraction failed. No valid edge payload generated." << std::endl;
+        return 1;
+    }
+    std::cout << "Extracted " << geometry.edges.numEdges() << " unique edges with "
+              << geometry.edges.sourceObjects.size() << " flattened source-object entries" << std::endl;
+
     // Write geometry data
     timer.next("Writing Geometry Data");
     
@@ -358,6 +372,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Total objects (triangles): " << geometry.totalTriangles << std::endl;
     std::cout << "Total vertices: " << geometry.vertices.size() << std::endl;
     std::cout << "Total triangles: " << geometry.indices.size() << std::endl;
+    std::cout << "Total extracted edges: " << geometry.edges.numEdges() << std::endl;
     std::cout << "Universe Extents: [" << (geometry.grid.maxBound.x - geometry.grid.minBound.x) << ", "
               << (geometry.grid.maxBound.y - geometry.grid.minBound.y) << ", "
               << (geometry.grid.maxBound.z - geometry.grid.minBound.z) << "]" << std::endl;
