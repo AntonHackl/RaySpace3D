@@ -370,6 +370,7 @@ int main(int argc, char* argv[]) {
     edgesParams1.mesh2_vertices = mesh2Uploader.getVertices();
     edgesParams1.mesh2_indices = (uint3*)mesh2Uploader.getIndices();
     edgesParams1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
+    edgesParams1.swap_pair_order = 0;
 
     MeshOverlapEdgesLaunchParams edgesParams2 = {};
     edgesParams2.edge_starts = mesh2EdgeData.d_edge_starts;
@@ -382,6 +383,7 @@ int main(int argc, char* argv[]) {
     edgesParams2.mesh2_vertices = mesh1Uploader.getVertices();
     edgesParams2.mesh2_indices = (uint3*)mesh1Uploader.getIndices();
     edgesParams2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
+    edgesParams2.swap_pair_order = 1;
 
     timer.next("Warmup");
     if (warmupRuns > 0) {

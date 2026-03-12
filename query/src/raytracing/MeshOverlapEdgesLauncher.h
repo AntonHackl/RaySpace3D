@@ -28,12 +28,16 @@ struct MeshOverlapEdgesLaunchParams {
     unsigned long long hash_table_size;
     int use_hash_table;
     int use_bitwise_hash;
+    unsigned long long* hash_access_counter;
+    unsigned long long* hash_contention_counter;
+    int track_hash_contention;
     
     // Two-pass results
     int* collision_counts;            // Per-edge collision counts
     long long* collision_offsets;     // Exclusive scan of counts
     MeshQueryResult* results;         // Actual collision pairs
     int pass;                         // 1 = count only, 2 = write results
+    int swap_pair_order;              // 0: (source,target), 1: (target,source) -> canonical (mesh1,mesh2)
 };
 
 class MeshOverlapEdgesLauncher {

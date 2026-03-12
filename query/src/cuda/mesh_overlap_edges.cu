@@ -30,12 +30,16 @@ struct MeshOverlapEdgesLaunchParams {
     unsigned long long hash_table_size;
     int use_hash_table;
     int use_bitwise_hash;
+    unsigned long long* hash_access_counter;
+    unsigned long long* hash_contention_counter;
+    int track_hash_contention;
     
     // Two-pass results
     int* collision_counts;            // Per-edge collision counts
     long long* collision_offsets;     // Exclusive scan of counts
     MeshQueryResult* results;         // Actual collision pairs
     int pass;                         // 1 = count only, 2 = write results
+    int swap_pair_order;              // 0: (source,target), 1: (target,source)
 };
 
 extern "C" __constant__ MeshOverlapEdgesLaunchParams mesh_overlap_edges_params;
@@ -76,9 +80,19 @@ __device__ void insert_hash_table_edges(int id1, int id2) {
     }
 
     for (int i = 0; i < 5000; ++i) {
+        if (mesh_overlap_edges_params.track_hash_contention &&
+            mesh_overlap_edges_params.hash_access_counter != nullptr) {
+            atomicAdd(mesh_overlap_edges_params.hash_access_counter, 1ULL);
+        }
+
         unsigned long long old = atomicCAS(&mesh_overlap_edges_params.hash_table[h], 0xFFFFFFFFFFFFFFFFULL, key);
         if (old == 0xFFFFFFFFFFFFFFFFULL || old == key) {
             return;
+        }
+
+        if (mesh_overlap_edges_params.track_hash_contention &&
+            mesh_overlap_edges_params.hash_contention_counter != nullptr) {
+            atomicAdd(mesh_overlap_edges_params.hash_contention_counter, 1ULL);
         }
 
         if (mesh_overlap_edges_params.use_bitwise_hash) {
@@ -141,12 +155,18 @@ static __forceinline__ __device__ int trace_edge_multi_hits_edges(
         // Record results for ALL source objects that use this edge
         for (int srcIdx = 0; srcIdx < numSourceObjects; ++srcIdx) {
             int sourceObjectId = sourceObjectIds[srcIdx];
+            int outMesh1 = sourceObjectId;
+            int outMesh2 = objectIdTarget;
+            if (mesh_overlap_edges_params.swap_pair_order) {
+                outMesh1 = objectIdTarget;
+                outMesh2 = sourceObjectId;
+            }
 
             if (mesh_overlap_edges_params.use_hash_table) {
-                insert_hash_table_edges(sourceObjectId, objectIdTarget);
+                insert_hash_table_edges(outMesh1, outMesh2);
             } else if (mesh_overlap_edges_params.pass == 2) {
                 const long long outIdx = writeCursor++;
-                mesh_overlap_edges_params.results[outIdx] = {sourceObjectId, objectIdTarget};
+                mesh_overlap_edges_params.results[outIdx] = {outMesh1, outMesh2};
             }
         }
         

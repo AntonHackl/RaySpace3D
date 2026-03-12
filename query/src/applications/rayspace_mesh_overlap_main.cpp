@@ -402,6 +402,7 @@ int main(int argc, char* argv[]) {
     edgesParams1.collision_offsets = nullptr;
     edgesParams1.results = nullptr;
     edgesParams1.pass = 0;
+    edgesParams1.swap_pair_order = 0;
 
     MeshOverlapEdgesLaunchParams edgesParams2;
     edgesParams2.edge_starts = mesh2EdgeData.d_edge_starts;
@@ -422,6 +423,7 @@ int main(int argc, char* argv[]) {
     edgesParams2.collision_offsets = nullptr;
     edgesParams2.results = nullptr;
     edgesParams2.pass = 0;
+    edgesParams2.swap_pair_order = 1;
     
     timer.next("Warmup");
     if (warmupRuns > 0) {

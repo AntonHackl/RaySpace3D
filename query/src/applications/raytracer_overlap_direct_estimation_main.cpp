@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <iomanip>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -32,6 +33,8 @@
 struct QueryResults {
     MeshQueryResult* d_merged_results;
     int numUnique;
+    unsigned long long hashAccesses;
+    unsigned long long hashContentions;
 };
 
 enum class QueryDirection {
@@ -77,7 +80,8 @@ QueryResults executeHashQuery(
     long long estimated_pairs,
     QueryDirection direction,
     PerformanceTimer* timer = nullptr,
-    bool verbose = true
+    bool verbose = true,
+    bool trackHashContention = false
 ) {
     // Clear hash table (set to 0xFF which is our sentinel for empty)
     CUDA_CHECK(cudaMemset(d_hash_table, 0xFF, hash_table_size * sizeof(unsigned long long)));
@@ -92,6 +96,23 @@ QueryResults executeHashQuery(
     edgesParams2.use_bitwise_hash = 0;
     edgesParams2.hash_table = d_hash_table;
     edgesParams2.hash_table_size = hash_table_size;
+
+    unsigned long long* d_hash_access_counter = nullptr;
+    unsigned long long* d_hash_contention_counter = nullptr;
+    if (trackHashContention) {
+        CUDA_CHECK(cudaMalloc(&d_hash_access_counter, sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMalloc(&d_hash_contention_counter, sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMemset(d_hash_access_counter, 0, sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMemset(d_hash_contention_counter, 0, sizeof(unsigned long long)));
+    }
+
+    edgesParams1.hash_access_counter = d_hash_access_counter;
+    edgesParams1.hash_contention_counter = d_hash_contention_counter;
+    edgesParams1.track_hash_contention = trackHashContention ? 1 : 0;
+
+    edgesParams2.hash_access_counter = d_hash_access_counter;
+    edgesParams2.hash_contention_counter = d_hash_contention_counter;
+    edgesParams2.track_hash_contention = trackHashContention ? 1 : 0;
 
     if (direction == QueryDirection::Both || direction == QueryDirection::Mesh1ToMesh2) {
         auto t0 = std::chrono::high_resolution_clock::now();
@@ -135,6 +156,15 @@ QueryResults executeHashQuery(
     CUDA_CHECK(cudaMalloc(&d_merged_results, max_output * sizeof(MeshQueryResult)));
     
     int numUnique = compact_hash_table_pairs(d_hash_table, hash_table_size, d_merged_results, max_output);
+
+    unsigned long long hashAccesses = 0;
+    unsigned long long hashContentions = 0;
+    if (trackHashContention) {
+        CUDA_CHECK(cudaMemcpy(&hashAccesses, d_hash_access_counter, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(&hashContentions, d_hash_contention_counter, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaFree(d_hash_access_counter));
+        CUDA_CHECK(cudaFree(d_hash_contention_counter));
+    }
     
     if (verbose) {
          std::cout << "Hash Table Query found " << numUnique << " unique pairs." << std::endl;
@@ -143,7 +173,7 @@ QueryResults executeHashQuery(
          }
     }
     
-    return {d_merged_results, numUnique};
+    return {d_merged_results, numUnique, hashAccesses, hashContentions};
 }
 
 // Helper to calculate global average size of objects from grid statistics
@@ -192,6 +222,7 @@ int main(int argc, char* argv[]) {
     float epsilon = 0.001f;
     QueryDirection queryDirection = QueryDirection::Both;
     std::string pairsOutputPath = "";
+    bool trackHashContention = false;
     
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
@@ -209,6 +240,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "  --epsilon <float>      Epsilon parameter for estimation (default: 0.001)" << std::endl;
                 std::cout << "  --query-direction <d>  Query direction: both|mesh1_to_mesh2|mesh2_to_mesh1 (default: both)" << std::endl;
                 std::cout << "  --pairs-output <path>  Optional CSV export path for unique result pairs" << std::endl;
+                std::cout << "  --track-hash-contention Track hash accesses and contention rate" << std::endl;
                 std::cout << "  --estimate-only        Only run selectivity estimation, skip actual query" << std::endl;
                 std::cout << "  --help, -h             Show this help message" << std::endl;
                 return 0;
@@ -247,6 +279,9 @@ int main(int argc, char* argv[]) {
             }
             else if (arg == "--pairs-output" && i + 1 < argc) {
                 pairsOutputPath = argv[++i];
+            }
+            else if (arg == "--track-hash-contention") {
+                trackHashContention = true;
             }
             else if (arg == "--estimate-only") {
                 estimateOnly = true;
@@ -416,6 +451,7 @@ int main(int argc, char* argv[]) {
     edgesParams1.mesh2_vertices = mesh2Uploader.getVertices();
     edgesParams1.mesh2_indices = (uint3*)mesh2Uploader.getIndices();
     edgesParams1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
+    edgesParams1.swap_pair_order = 0;
 
     MeshOverlapEdgesLaunchParams edgesParams2 = {};
     edgesParams2.edge_starts = mesh2EdgeData.d_edge_starts;
@@ -428,6 +464,7 @@ int main(int argc, char* argv[]) {
     edgesParams2.mesh2_vertices = mesh1Uploader.getVertices();
     edgesParams2.mesh2_indices = (uint3*)mesh1Uploader.getIndices();
     edgesParams2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
+    edgesParams2.swap_pair_order = 1;
 
     timer.next("Warmup");
     if (warmupRuns > 0) {
@@ -449,6 +486,7 @@ int main(int argc, char* argv[]) {
                 warmupEstimatedPairs,
                 queryDirection,
                 nullptr,
+                false,
                 false
             );
 
@@ -458,6 +496,8 @@ int main(int argc, char* argv[]) {
     }
 
     int finalNumUnique = 0;
+    unsigned long long finalHashAccesses = 0;
+    unsigned long long finalHashContentions = 0;
     std::vector<MeshQueryResult> hostResults;
     for (int run = 0; run < numberOfRuns; ++run) {
         bool verboseRun = (run == 0);
@@ -485,7 +525,8 @@ int main(int argc, char* argv[]) {
             estimatedPairs,
             queryDirection,
             &timer,
-            verboseRun
+            verboseRun,
+            trackHashContention
         );
 
         timer.next("Download Results");
@@ -497,6 +538,19 @@ int main(int argc, char* argv[]) {
                                   cudaMemcpyDeviceToHost));
         }
         finalNumUnique = queryResults.numUnique;
+        finalHashAccesses = queryResults.hashAccesses;
+        finalHashContentions = queryResults.hashContentions;
+
+        if (trackHashContention) {
+            double contentionPct = (queryResults.hashAccesses > 0)
+                ? (100.0 * static_cast<double>(queryResults.hashContentions) / static_cast<double>(queryResults.hashAccesses))
+                : 0.0;
+            std::cout << std::fixed << std::setprecision(2)
+                      << "Hash contention (run " << (run + 1) << "): "
+                      << queryResults.hashContentions << "/" << queryResults.hashAccesses
+                      << " accesses (" << contentionPct << "%)" << std::endl;
+            std::cout.unsetf(std::ios::floatfield);
+        }
 
         if (queryResults.d_merged_results) CUDA_CHECK(cudaFree(queryResults.d_merged_results));
         CUDA_CHECK(cudaFree(d_hash_table));
@@ -522,6 +576,16 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh2 Universe Min: [" << mesh2.grid.minBound.x << ", " << mesh2.grid.minBound.y << ", " << mesh2.grid.minBound.z << "]" << std::endl;
     std::cout << "Mesh2 Universe Max: [" << mesh2.grid.maxBound.x << ", " << mesh2.grid.maxBound.y << ", " << mesh2.grid.maxBound.z << "]" << std::endl;
     std::cout << "Query direction: " << directionToString(queryDirection) << std::endl;
+    std::cout << "Hash contention tracking: " << (trackHashContention ? "enabled" : "disabled") << std::endl;
+    if (trackHashContention) {
+        double contentionPct = (finalHashAccesses > 0)
+            ? (100.0 * static_cast<double>(finalHashContentions) / static_cast<double>(finalHashAccesses))
+            : 0.0;
+        std::cout << std::fixed << std::setprecision(2)
+                  << "Hash contention (last run): " << finalHashContentions << "/" << finalHashAccesses
+                  << " accesses (" << contentionPct << "%)" << std::endl;
+        std::cout.unsetf(std::ios::floatfield);
+    }
     std::cout << "Unique object pairs: " << finalNumUnique << std::endl;
 
     if (!pairsOutputPath.empty()) {
