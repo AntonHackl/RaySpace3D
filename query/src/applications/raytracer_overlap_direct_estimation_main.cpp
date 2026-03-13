@@ -223,6 +223,7 @@ int main(int argc, char* argv[]) {
     QueryDirection queryDirection = QueryDirection::Both;
     std::string pairsOutputPath = "";
     bool trackHashContention = false;
+    unsigned long long manualHashTableSize = 0;
     
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
@@ -241,6 +242,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "  --query-direction <d>  Query direction: both|mesh1_to_mesh2|mesh2_to_mesh1 (default: both)" << std::endl;
                 std::cout << "  --pairs-output <path>  Optional CSV export path for unique result pairs" << std::endl;
                 std::cout << "  --track-hash-contention Track hash accesses and contention rate" << std::endl;
+                std::cout << "  --hash-table-size <ull> Override hash table size (number of slots); 0 = auto-compute" << std::endl;
                 std::cout << "  --estimate-only        Only run selectivity estimation, skip actual query" << std::endl;
                 std::cout << "  --help, -h             Show this help message" << std::endl;
                 return 0;
@@ -282,6 +284,9 @@ int main(int argc, char* argv[]) {
             }
             else if (arg == "--track-hash-contention") {
                 trackHashContention = true;
+            }
+            else if (arg == "--hash-table-size" && i + 1 < argc) {
+                manualHashTableSize = std::stoull(argv[++i]);
             }
             else if (arg == "--estimate-only") {
                 estimateOnly = true;
@@ -504,7 +509,9 @@ int main(int argc, char* argv[]) {
 
         timer.next("Selectivity Estimation");
         long long estimatedPairs = estimatePairs(verboseRun);
-        unsigned long long hash_table_size = computeHashTableSize(estimatedPairs);
+        unsigned long long hash_table_size = (manualHashTableSize > 0)
+            ? manualHashTableSize
+            : computeHashTableSize(estimatedPairs);
 
         if (verboseRun) {
             std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
