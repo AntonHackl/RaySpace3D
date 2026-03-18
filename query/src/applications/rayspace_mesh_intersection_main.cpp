@@ -133,7 +133,15 @@ QueryResults executeSplitQuery(
 
     int numOverlap = 0;
     if (totalOverlapResults > 0) {
+        auto t0_overlap_dedup = std::chrono::high_resolution_clock::now();
         numOverlap = (int)merge_and_deduplicate_pairs_gpu(nullptr, totalOverlapResults, nullptr, 0, d_overlap_pairs);
+        auto t1_overlap_dedup = std::chrono::high_resolution_clock::now();
+        if (timer) {
+            timer->addMeasurement(
+                "Overlap_Deduplication",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1_overlap_dedup - t0_overlap_dedup).count()
+            );
+        }
     }
 
     CUDA_CHECK(cudaFree(d_overlap_counts1));
@@ -222,7 +230,15 @@ QueryResults executeSplitQuery(
 
     int numContainment = 0;
     if (totalContainmentResults > 0) {
+        auto t0_contain_dedup = std::chrono::high_resolution_clock::now();
         numContainment = (int)merge_and_deduplicate_pairs_gpu(nullptr, totalContainmentResults, nullptr, 0, d_containment_pairs);
+        auto t1_contain_dedup = std::chrono::high_resolution_clock::now();
+        if (timer) {
+            timer->addMeasurement(
+                "Containment_Deduplication",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1_contain_dedup - t0_contain_dedup).count()
+            );
+        }
     }
 
     CUDA_CHECK(cudaFree(d_containment_counts1));
@@ -234,12 +250,20 @@ QueryResults executeSplitQuery(
     const long long totalCandidates = (long long)numOverlap + (long long)numContainment;
     int numUnique = 0;
     if (totalCandidates > 0) {
+        auto t0_merge = std::chrono::high_resolution_clock::now();
         CUDA_CHECK(cudaMalloc(&d_merged_results, (size_t)totalCandidates * sizeof(MeshQueryResult)));
         numUnique = (int)merge_and_deduplicate_pairs_gpu(
             d_overlap_pairs, numOverlap,
             d_containment_pairs, numContainment,
             d_merged_results
         );
+        auto t1_merge = std::chrono::high_resolution_clock::now();
+        if (timer) {
+            timer->addMeasurement(
+                "Final_Merge_Deduplication",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1_merge - t0_merge).count()
+            );
+        }
     }
 
     if (verbose) {
@@ -436,6 +460,11 @@ int main(int argc, char* argv[]) {
     params1.hash_table = nullptr;
     params1.hash_table_size = 0;
     params1.first_triangle_index_per_object = d_first_triangle_mesh1;
+    params1.overlap_max_iterations = 100;
+    params1.containment_max_iterations = 2048;
+    params1.containment_query_point_mode = 0;
+    params1.profiling_enabled = 0;
+    params1.profiling_stats = nullptr;
     
     MeshIntersectionLaunchParams params2;
     params2.mesh1_vertices = mesh2Uploader.getVertices();
@@ -464,6 +493,11 @@ int main(int argc, char* argv[]) {
     params2.hash_table = nullptr;
     params2.hash_table_size = 0;
     params2.first_triangle_index_per_object = d_first_triangle_mesh2;
+    params2.overlap_max_iterations = 100;
+    params2.containment_max_iterations = 2048;
+    params2.containment_query_point_mode = 0;
+    params2.profiling_enabled = 0;
+    params2.profiling_stats = nullptr;
     
     timer.next("Warmup");
     if (warmupRuns > 0) {

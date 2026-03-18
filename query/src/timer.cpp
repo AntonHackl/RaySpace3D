@@ -9,6 +9,7 @@ PerformanceTimer::PerformanceTimer() : is_running(false) {
 void PerformanceTimer::start(const std::string& phaseName) {
     phases.clear();
     manualMeasurements.clear();
+    counters.clear();
     total_start = std::chrono::high_resolution_clock::now();
     is_running = true;
     
@@ -55,6 +56,13 @@ void PerformanceTimer::addMeasurement(const std::string& phaseName, long long du
     manualMeasurements.push_back(phase);
 }
 
+void PerformanceTimer::addCounter(const std::string& counterName, unsigned long long value) {
+    Counter c;
+    c.name = counterName;
+    c.value = value;
+    counters.push_back(c);
+}
+
 void PerformanceTimer::endCurrentPhase() {
     if (!phases.empty() && phases.back().end_time == std::chrono::high_resolution_clock::time_point{}) {
         phases.back().end_time = std::chrono::high_resolution_clock::now();
@@ -93,6 +101,14 @@ void PerformanceTimer::printResults(const std::string& filename) const {
         std::cout << std::left << std::setw(30) << (phase.name + ":")
                   << std::right << std::setw(20) << phase.duration_us << " microseconds ("
                   << std::fixed << std::setprecision(2) << (double)phase.duration_us / 1000.0 << " ms)" << std::endl;
+    }
+
+    if (!counters.empty()) {
+        std::cout << "\n=== Profiling Counters ===" << std::endl;
+        for (const auto& counter : counters) {
+            std::cout << std::left << std::setw(30) << (counter.name + ":")
+                      << std::right << std::setw(20) << counter.value << std::endl;
+        }
     }
     
     long long total_us = getTotalDuration();
@@ -142,6 +158,21 @@ void PerformanceTimer::writeResultsToFile(const std::string& filename) const {
         file << "\n";
     }
 
+    file << "  },\n";
+
+    file << "  \"counters\": {\n";
+    for (size_t i = 0; i < counters.size(); ++i) {
+        const auto& counter = counters[i];
+        std::string key;
+        key.reserve(counter.name.size());
+        for (char c : counter.name) {
+            key.push_back(std::tolower(static_cast<unsigned char>(c)));
+        }
+
+        file << "    \"" << key << "\": " << counter.value;
+        if (i < counters.size() - 1) file << ",";
+        file << "\n";
+    }
     file << "  },\n";
     
     long long total_us = getTotalDuration();

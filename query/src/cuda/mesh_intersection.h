@@ -4,6 +4,23 @@
 #include <optix.h>
 #include <cuda_runtime.h>
 
+struct MeshIntersectionProfilingStats {
+    unsigned long long overlap_trace_calls;
+    unsigned long long overlap_iterations_total;
+    unsigned long long overlap_hits_total;
+    unsigned int overlap_max_iterations_per_trace;
+
+    unsigned long long containment_rays_total;
+    unsigned long long containment_iterations_total;
+    unsigned long long containment_hits_total;
+    unsigned int containment_max_iterations_per_ray;
+    unsigned long long containment_same_hit_suppressed;
+    unsigned long long containment_candidate_additions;
+    unsigned long long containment_candidate_toggles;
+    unsigned long long containment_candidate_overflow;
+    unsigned long long containment_targets_total;
+};
+
 struct MeshIntersectionLaunchParams {
     // Mesh1 data (plain on GPU)
     float3* mesh1_vertices;
@@ -41,4 +58,11 @@ struct MeshIntersectionLaunchParams {
     MeshQueryResult* results;
     int pass;
     int swap_result_ids; // 0 = (src_obj, hit_obj), 1 = (hit_obj, src_obj)
+
+    // Runtime controls and optional profiling.
+    int overlap_max_iterations;
+    int containment_max_iterations;
+    int containment_query_point_mode; // 0=vertex, 1=triangle-centroid
+    int profiling_enabled;
+    MeshIntersectionProfilingStats* profiling_stats;
 };
