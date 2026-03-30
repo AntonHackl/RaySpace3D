@@ -111,7 +111,6 @@ set(MESH_CONTAINMENT_SOURCE ${CUDA_DIR}/mesh_containment.cu)
 set(RAYSPACE_MAIN_SOURCE ${SRC_DIR}/applications/rayspace_main.cpp)
 set(FILTER_REFINE_SOURCE ${SRC_DIR}/applications/rayspace_filter_refine_main.cpp)
 set(MESH_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_overlap_main.cpp)
-set(MESH_INTERSECTION_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_intersection_main.cpp)
 set(ESTIMATED_INTERSECTION_APP_SOURCE ${SRC_DIR}/applications/raytracer_intersection_estimated_main.cpp)
 set(ESTIMATED_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/raytracer_overlap_estimated_main.cpp)
 set(ESTIMATED_OVERLAP_DIRECT_APP_SOURCE ${SRC_DIR}/applications/raytracer_overlap_direct_estimation_main.cpp)
@@ -197,17 +196,6 @@ add_executable(raytracer_mesh_overlap
     ${MESH_QUERY_DEDUP_SOURCE} 
     ${SCAN_UTILS_SOURCE})
 
-add_executable(raytracer_mesh_intersection 
-    ${MESH_INTERSECTION_APP_SOURCE} 
-    ${RUNTIME_SOURCES}
-    ${TIMER_SOURCE}
-    ${OPTIX_SOURCES} 
-    ${GEOMETRY_SOURCES} 
-    ${RAYTRACING_SOURCES} 
-    ${RESULT_COMPACTION_SOURCE} 
-    ${MESH_QUERY_DEDUP_SOURCE} 
-    ${SCAN_UTILS_SOURCE})
-
 add_executable(raytracer_intersection_estimated
     ${ESTIMATED_INTERSECTION_APP_SOURCE}
     ${RUNTIME_SOURCES}
@@ -255,7 +243,7 @@ add_executable(raytracer_containment
     ${MESH_QUERY_DEDUP_SOURCE}
     ${SCAN_UTILS_SOURCE})
 
-foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated raytracer_overlap_direct_estimation raytracer_containment)
+foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_intersection_estimated raytracer_overlap_estimated raytracer_overlap_direct_estimation raytracer_containment)
     target_include_directories(${TARGET_NAME} PRIVATE 
         ${CUDA_INCLUDE_DIRS} 
         ${OptiX_INCLUDE} 
@@ -283,13 +271,6 @@ target_link_libraries(raytracer_filter_refine PRIVATE
     Boost::system)
 
 target_link_libraries(raytracer_mesh_overlap PRIVATE 
-    rayspace3d_common
-    ${CUDA_LIBRARIES} 
-    CGAL::CGAL 
-    Boost::filesystem 
-    Boost::system)
-
-target_link_libraries(raytracer_mesh_intersection PRIVATE 
     rayspace3d_common
     ${CUDA_LIBRARIES} 
     CGAL::CGAL 
@@ -327,7 +308,6 @@ target_link_libraries(raytracer_containment PRIVATE
 target_compile_definitions(raytracer PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_filter_refine PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_mesh_overlap PRIVATE INCLUDE_OPTIX)
-target_compile_definitions(raytracer_mesh_intersection PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_intersection_estimated PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_overlap_estimated PRIVATE INCLUDE_OPTIX)
 target_compile_definitions(raytracer_overlap_direct_estimation PRIVATE INCLUDE_OPTIX)
@@ -336,7 +316,6 @@ target_compile_definitions(raytracer_containment PRIVATE INCLUDE_OPTIX)
 set_target_properties(raytracer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_filter_refine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_mesh_overlap PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set_target_properties(raytracer_mesh_intersection PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_intersection_estimated PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_overlap_estimated PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(raytracer_overlap_direct_estimation PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -379,9 +358,8 @@ add_custom_target(copy_ptx ALL
 add_dependencies(raytracer copy_ptx)
 add_dependencies(raytracer_filter_refine copy_ptx)
 add_dependencies(raytracer_mesh_overlap copy_ptx)
-add_dependencies(raytracer_mesh_intersection copy_ptx)
 
-foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_mesh_intersection raytracer_intersection_estimated raytracer_overlap_estimated raytracer_overlap_direct_estimation raytracer_containment)
+foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_intersection_estimated raytracer_overlap_estimated raytracer_overlap_direct_estimation raytracer_containment)
     add_dependencies(${TARGET_NAME} copy_ptx)
 endforeach()
 
