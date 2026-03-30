@@ -13,6 +13,7 @@
 #include <cmath>
 #include <chrono>
 #include <iomanip>
+#include <cuda_runtime.h>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -232,6 +233,7 @@ int main(int argc, char* argv[]) {
     std::string pairsOutputPath = "";
     bool trackHashContention = false;
     unsigned long long manualHashTableSize = 0;
+    float hashTableFreeMemFraction = 0.0f;
     
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
@@ -251,6 +253,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "  --pairs-output <path>  Optional CSV export path for unique result pairs" << std::endl;
                 std::cout << "  --track-hash-contention Track hash accesses and contention rate" << std::endl;
                 std::cout << "  --hash-table-size <ull> Override hash table size (number of slots); 0 = auto-compute" << std::endl;
+                std::cout << "  --hash-table-free-mem-fraction <f> Use f (0,1] of currently free GPU memory for hash table sizing" << std::endl;
                 std::cout << "  --estimate-only        Only run selectivity estimation, skip actual query" << std::endl;
                 std::cout << "  --help, -h             Show this help message" << std::endl;
                 return 0;
@@ -296,6 +299,9 @@ int main(int argc, char* argv[]) {
             else if (arg == "--hash-table-size" && i + 1 < argc) {
                 manualHashTableSize = std::stoull(argv[++i]);
             }
+            else if (arg == "--hash-table-free-mem-fraction" && i + 1 < argc) {
+                hashTableFreeMemFraction = std::stof(argv[++i]);
+            }
             else if (arg == "--estimate-only") {
                 estimateOnly = true;
             }
@@ -309,6 +315,10 @@ int main(int argc, char* argv[]) {
 
     if (numberOfRuns < 1) numberOfRuns = 1;
     if (warmupRuns < 0) warmupRuns = 0;
+    if (hashTableFreeMemFraction < 0.0f || hashTableFreeMemFraction > 1.0f) {
+        std::cerr << "Error: --hash-table-free-mem-fraction must be in [0, 1]." << std::endl;
+        return 1;
+    }
     
     timer.start("Load Mesh1");
     GeometryData mesh1 = loadGeometryFromFile(mesh1Path);
@@ -395,7 +405,24 @@ int main(int argc, char* argv[]) {
         return estimatedPairs;
     };
 
-    auto computeHashTableSize = [](long long estimatedPairs) -> unsigned long long {
+    auto computeHashTableSize = [&](long long estimatedPairs) -> unsigned long long {
+        if (hashTableFreeMemFraction > 0.0f) {
+            size_t freeMemBytes = 0;
+            size_t totalMemBytes = 0;
+            cudaError_t memInfoStatus = cudaMemGetInfo(&freeMemBytes, &totalMemBytes);
+            if (memInfoStatus == cudaSuccess && freeMemBytes > 0) {
+                double fraction = static_cast<double>(hashTableFreeMemFraction);
+                unsigned long long targetBytes = static_cast<unsigned long long>(fraction * static_cast<double>(freeMemBytes));
+                unsigned long long targetSlots = targetBytes / sizeof(unsigned long long);
+                if (targetSlots < 1024ULL) targetSlots = 1024ULL;
+                if ((targetSlots % 2ULL) == 0ULL) {
+                    targetSlots += 1ULL;
+                }
+                return targetSlots;
+            }
+            std::cerr << "Warning: cudaMemGetInfo failed for free-memory hash sizing. Falling back to estimate-based sizing." << std::endl;
+        }
+
         unsigned long long hash_table_size = 16777216;
         if (estimatedPairs > 0) {
             unsigned long long target = (unsigned long long)(estimatedPairs / 0.5);
@@ -522,7 +549,13 @@ int main(int argc, char* argv[]) {
             : computeHashTableSize(estimatedPairs);
 
         if (verboseRun) {
-            std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
+            if (manualHashTableSize > 0) {
+                std::cout << "Using Manual Hash Table Size: " << hash_table_size << std::endl;
+            } else if (hashTableFreeMemFraction > 0.0f) {
+                std::cout << "Using Free GPU Memory Hash Table Size: " << hash_table_size << std::endl;
+            } else {
+                std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
+            }
         }
 
         unsigned long long* d_hash_table = nullptr;
