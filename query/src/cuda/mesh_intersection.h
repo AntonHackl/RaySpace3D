@@ -62,7 +62,18 @@ struct MeshIntersectionLaunchParams {
     // Runtime controls and optional profiling.
     int overlap_max_iterations;
     int containment_max_iterations;
-    int containment_query_point_mode; // 0=vertex, 1=triangle-centroid
     int profiling_enabled;
     MeshIntersectionProfilingStats* profiling_stats;
+
+    // Optional per-source/per-target containment hit tracking.
+    int enable_pair_hit_tracking;
+    int max_pair_targets_per_source;
+    int* pair_target_object_ids;
+    unsigned int* pair_target_hit_counts;
+
+    // Optional per-source containment traversal diagnostics.
+    int enable_containment_tracking;
+    unsigned int* containment_iterations_per_source;
+    unsigned int* containment_candidate_count_per_source;
+    unsigned int* containment_candidate_overflow_per_source;
 };

@@ -10,6 +10,7 @@
 #include <sstream>
 #include <set>
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <chrono>
 #include <stdexcept>
@@ -30,6 +31,8 @@
 #include "../ptx_utils.h"
 #include "../cuda/estimated_intersection.h"
 #include "app_cli_options.h"
+#include "../utilities/PairHitTracking.h"
+#include "../utilities/ContainmentTracking.h"
 
 struct QueryResults {
     MeshQueryResult* d_merged_results;
@@ -55,14 +58,19 @@ QueryDirection parseQueryDirection(const std::string& direction) {
     throw std::invalid_argument("Invalid query direction: " + direction);
 }
 
-int parseContainmentQueryPointMode(const std::string& mode) {
-    if (mode == "vertex") {
-        return 0;
+void writeIntersectionPairsCsv(
+    const std::string& outputPath,
+    const std::vector<MeshQueryResult>& pairs
+) {
+    std::ofstream out(outputPath);
+    if (!out.is_open()) {
+        throw std::runtime_error("Failed to open intersection pairs output: " + outputPath);
     }
-    if (mode == "centroid") {
-        return 1;
+
+    out << "a_object_id,b_object_id\n";
+    for (const auto& p : pairs) {
+        out << p.object_id_mesh1 << ',' << p.object_id_mesh2 << "\n";
     }
-    throw std::invalid_argument("Invalid containment query point mode: " + mode);
 }
 
 // Execute the intersection query using hash table deduplication
@@ -206,14 +214,16 @@ public:
     IntersectionEstimatedCliOptions() : MeshPairCliOptions("estimated_intersection_timing.json") {}
 
     std::string queryDirectionArg = "both";
-    std::string containmentQueryPointArg = "vertex";
     bool estimateOnly = false;
     bool enableProfilingStats = false;
+    std::string pairsOutputPath;
+    std::string pairHitsOutputPath;
+    std::string containmentTrackingOutputPath;
     float gamma = 0.8f;
     float epsilon = 0.001f;
     float hashLoadFactor = 0.5f;
     int overlapMaxIterations = 100;
-    int containmentMaxIterations = 512;
+    int containmentMaxIterations = 1024;
 
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
@@ -222,11 +232,13 @@ public:
         options.emplace_back("--epsilon <float>", "Estimation epsilon (default: 0.001)");
         options.emplace_back("--estimate-only", "Run only selectivity estimation");
         options.emplace_back("--query-direction <both|mesh1_to_mesh2|mesh2_to_mesh1>", "Control query direction (default: both)");
-        options.emplace_back("--containment-query-point <vertex|centroid>", "Containment query point mode (default: vertex)");
         options.emplace_back("--overlap-max-iterations <int>", "Overlap ray iteration cap (default: 100)");
-        options.emplace_back("--containment-max-iterations <int>", "Containment ray iteration cap (default: 512)");
+        options.emplace_back("--containment-max-iterations <int>", "Containment ray iteration cap (default: 1024)");
         options.emplace_back("--hash-load-factor <float>", "Hash load factor in (0,1] (default: 0.5)");
         options.emplace_back("--enable-profiling-stats", "Enable device-side profiling counters");
+        options.emplace_back("--pairs-output <path>", "Intersection pairs CSV path (default: intersection_pairs.csv)");
+        options.emplace_back("--pair-hits-output <path>", "Pair hit tracking CSV path (default: intersection_pair_hits.csv)");
+        options.emplace_back("--containment-tracking-output <path>", "Containment tracking CSV path (default: intersection_containment_tracking.csv)");
         appendHelpFlag(options);
 
         printHelpMessage(
@@ -255,10 +267,6 @@ protected:
             queryDirectionArg = argv[++i];
             return true;
         }
-        if (arg == "--containment-query-point" && i + 1 < argc) {
-            containmentQueryPointArg = argv[++i];
-            return true;
-        }
         if (arg == "--overlap-max-iterations" && i + 1 < argc) {
             overlapMaxIterations = std::stoi(argv[++i]);
             return true;
@@ -273,6 +281,18 @@ protected:
         }
         if (arg == "--enable-profiling-stats") {
             enableProfilingStats = true;
+            return true;
+        }
+        if (arg == "--pairs-output" && i + 1 < argc) {
+            pairsOutputPath = argv[++i];
+            return true;
+        }
+        if (arg == "--pair-hits-output" && i + 1 < argc) {
+            pairHitsOutputPath = argv[++i];
+            return true;
+        }
+        if (arg == "--containment-tracking-output" && i + 1 < argc) {
+            containmentTrackingOutputPath = argv[++i];
             return true;
         }
         return false;
@@ -295,9 +315,17 @@ int main(int argc, char* argv[]) {
     const std::string& outputJsonPath = options.outputJsonPath;
     const std::string& ptxPath = options.ptxPath;
     const std::string& queryDirectionArg = options.queryDirectionArg;
-    const std::string& containmentQueryPointArg = options.containmentQueryPointArg;
     const bool estimateOnly = options.estimateOnly;
     const bool enableProfilingStats = options.enableProfilingStats;
+    const std::string pairsOutputPath = options.pairsOutputPath.empty()
+        ? "intersection_pairs.csv"
+        : options.pairsOutputPath;
+    const std::string pairHitsOutputPath = options.pairHitsOutputPath.empty()
+        ? "intersection_pair_hits.csv"
+        : options.pairHitsOutputPath;
+    const std::string containmentTrackingOutputPath = options.containmentTrackingOutputPath.empty()
+        ? "intersection_containment_tracking.csv"
+        : options.containmentTrackingOutputPath;
     const float gamma = options.gamma;
     const float epsilon = options.epsilon;
     const float hashLoadFactor = options.hashLoadFactor;
@@ -305,14 +333,11 @@ int main(int argc, char* argv[]) {
     const int containmentMaxIterations = options.containmentMaxIterations;
 
     QueryDirection queryDirection = QueryDirection::Both;
-    int containmentQueryPointMode = 0;
     try {
         queryDirection = parseQueryDirection(queryDirectionArg);
-        containmentQueryPointMode = parseContainmentQueryPointMode(containmentQueryPointArg);
     } catch (const std::exception& ex) {
         std::cerr << ex.what() << std::endl;
         std::cerr << "Valid values for --query-direction are: both, mesh1_to_mesh2, mesh2_to_mesh1" << std::endl;
-        std::cerr << "Valid values for --containment-query-point are: vertex, centroid" << std::endl;
         return 1;
     }
 
@@ -448,7 +473,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Estimated Pairs:    " << estimatedPairs << std::endl;
     std::cout << "Hash Table Size:    " << hash_table_size << " (Load Factor ~" << hashLoadFactor << ")" << std::endl;
     std::cout << "Query Direction:    " << queryDirectionArg << std::endl;
-    std::cout << "Containment Point:  " << containmentQueryPointArg << std::endl;
     std::cout << "Overlap Max Iter:   " << overlapMaxIterations << std::endl;
     std::cout << "Contain Max Iter:   " << containmentMaxIterations << std::endl;
     std::cout << "Profiling Stats:    " << (enableProfilingStats ? "enabled" : "disabled") << std::endl;
@@ -527,7 +551,7 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_first_triangle_mesh1, firstTriangleMesh1.data(), mesh1NumObjects * sizeof(int), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_first_triangle_mesh2, firstTriangleMesh2.data(), mesh2NumObjects * sizeof(int), cudaMemcpyHostToDevice));
 
-    MeshIntersectionLaunchParams params1;
+    MeshIntersectionLaunchParams params1{};
     params1.mesh1_vertices = mesh1Uploader.getVertices();
     params1.mesh1_indices = mesh1Uploader.getIndices();
     params1.mesh1_triangle_to_object = mesh1Uploader.getTriangleToObject();
@@ -545,7 +569,7 @@ int main(int argc, char* argv[]) {
     params1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
     params1.mesh2_num_objects = mesh2NumObjects;
 
-    MeshIntersectionLaunchParams params2;
+    MeshIntersectionLaunchParams params2{};
     params2.mesh1_vertices = mesh2Uploader.getVertices();
     params2.mesh1_indices = mesh2Uploader.getIndices();
     params2.mesh1_triangle_to_object = mesh2Uploader.getTriangleToObject();
@@ -576,15 +600,23 @@ int main(int argc, char* argv[]) {
 
     params1.overlap_max_iterations = overlapMaxIterations;
     params1.containment_max_iterations = containmentMaxIterations;
-    params1.containment_query_point_mode = containmentQueryPointMode;
     params1.profiling_enabled = enableProfilingStats ? 1 : 0;
     params1.profiling_stats = d_profiling_stats;
 
     params2.overlap_max_iterations = overlapMaxIterations;
     params2.containment_max_iterations = containmentMaxIterations;
-    params2.containment_query_point_mode = containmentQueryPointMode;
     params2.profiling_enabled = enableProfilingStats ? 1 : 0;
     params2.profiling_stats = d_profiling_stats;
+
+    // Allocate and configure pair-hit tracking
+    PairHitTrackingBuffers pairHitBuffers;
+    pairHitBuffers.allocate(mesh1NumObjects, mesh2NumObjects);
+    pairHitBuffers.setupLaunchParams(params1, params2);
+
+    // Allocate and configure per-source containment traversal tracking
+    ContainmentTrackingBuffers containmentTrackingBuffers;
+    containmentTrackingBuffers.allocate(mesh1NumObjects, mesh2NumObjects);
+    containmentTrackingBuffers.setupLaunchParams(params1, params2);
 
     timer.next("Query");
     std::cout << "Running Intersection Query..." << std::endl;
@@ -603,6 +635,43 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh1 Universe Max: [" << mesh1.grid.maxBound.x << ", " << mesh1.grid.maxBound.y << ", " << mesh1.grid.maxBound.z << "]" << std::endl;
     std::cout << "Mesh2 Universe Min: [" << mesh2.grid.minBound.x << ", " << mesh2.grid.minBound.y << ", " << mesh2.grid.minBound.z << "]" << std::endl;
     std::cout << "Mesh2 Universe Max: [" << mesh2.grid.maxBound.x << ", " << mesh2.grid.maxBound.y << ", " << mesh2.grid.maxBound.z << "]" << std::endl;
+
+    // Copy pair-hit tracking data and export CSV
+    pairHitBuffers.copyFromDevice(mesh1NumObjects, mesh2NumObjects);
+    containmentTrackingBuffers.copyFromDevice(mesh1NumObjects, mesh2NumObjects);
+
+    std::vector<MeshQueryResult> h_pairs(results.numUnique);
+    if (results.numUnique > 0) {
+        CUDA_CHECK(cudaMemcpy(
+            h_pairs.data(),
+            results.d_merged_results,
+            static_cast<size_t>(results.numUnique) * sizeof(MeshQueryResult),
+            cudaMemcpyDeviceToHost
+        ));
+    }
+
+    writeIntersectionPairsCsv(pairsOutputPath, h_pairs);
+
+    writePairHitTrackingCsv(
+        pairHitsOutputPath,
+        PairHitTrackingBuffers::kMaxPairTargetsPerSource,
+        pairHitBuffers.h_mesh1_pair_target_ids,
+        pairHitBuffers.h_mesh1_pair_target_hits,
+        pairHitBuffers.h_mesh2_pair_target_ids,
+        pairHitBuffers.h_mesh2_pair_target_hits
+    );
+    writeContainmentTrackingCsv(
+        containmentTrackingOutputPath,
+        containmentTrackingBuffers.h_mesh1_iterations,
+        containmentTrackingBuffers.h_mesh1_candidate_counts,
+        containmentTrackingBuffers.h_mesh1_candidate_overflows,
+        containmentTrackingBuffers.h_mesh2_iterations,
+        containmentTrackingBuffers.h_mesh2_candidate_counts,
+        containmentTrackingBuffers.h_mesh2_candidate_overflows
+    );
+    std::cout << "Intersection pairs CSV: " << pairsOutputPath << std::endl;
+    std::cout << "Pair hit tracking CSV: " << pairHitsOutputPath << std::endl;
+    std::cout << "Containment tracking CSV: " << containmentTrackingOutputPath << std::endl;
 
     if (enableProfilingStats) {
         CUDA_CHECK(cudaMemcpy(&h_profiling_stats, d_profiling_stats, sizeof(MeshIntersectionProfilingStats), cudaMemcpyDeviceToHost));
@@ -634,6 +703,8 @@ int main(int argc, char* argv[]) {
     if (d_profiling_stats) {
         CUDA_CHECK(cudaFree(d_profiling_stats));
     }
+    pairHitBuffers.free();
+    containmentTrackingBuffers.free();
     CUDA_CHECK(cudaFree(d_hash_table));
     CUDA_CHECK(cudaFree(results.d_merged_results));
     CUDA_CHECK(cudaFree(d_first_triangle_mesh1));

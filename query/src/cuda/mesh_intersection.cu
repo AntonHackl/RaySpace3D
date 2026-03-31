@@ -131,8 +131,17 @@ __device__ void insert_hash_table(int id1, int id2) {
     }
 }
 
-__device__ int collect_containing_target_objects(const float3& point, int* outObjectIds, int maxOutObjects) {
-    constexpr int kMaxCandidates = 32;
+__device__ int collect_containing_target_objects(
+    const float3& point,
+    int* outObjectIds,
+    int maxOutObjects,
+    int* outRayHitCount = nullptr,
+    unsigned int* outTargetHitCounts = nullptr,
+    int* outIterations = nullptr,
+    int* outCandidateCount = nullptr,
+    int* outCandidateOverflow = nullptr
+) {
+    constexpr int kMaxCandidates = 256;
     int kMaxIterations = mesh_intersection_params.containment_max_iterations;
     if (kMaxIterations <= 0) {
         kMaxIterations = 2048;
@@ -142,6 +151,7 @@ __device__ int collect_containing_target_objects(const float3& point, int* outOb
 
     int candidateObjects[kMaxCandidates];
     unsigned char parity[kMaxCandidates];
+    unsigned int candidateHitCounts[kMaxCandidates];
     int candidateCount = 0;
 
     float current_t_min = 1e-4f;
@@ -200,11 +210,13 @@ __device__ int collect_containing_target_objects(const float3& point, int* outOb
             }
 
             if (pos >= 0) {
+                candidateHitCounts[pos] += 1U;
                 parity[pos] ^= 1;
                 candidateToggles++;
             } else if (candidateCount < kMaxCandidates) {
                 candidateObjects[candidateCount] = objId;
                 parity[candidateCount] = 1;
+                candidateHitCounts[candidateCount] = 1U;
                 candidateCount++;
                 candidateAdditions++;
             } else {
@@ -217,9 +229,14 @@ __device__ int collect_containing_target_objects(const float3& point, int* outOb
         lastT = t;
         lastTriangle = triangleIndex;
 
-        float next_t_min = t + epsilon;
+        // Advance to the next representable float after the hit distance to avoid
+        // repeatedly tracing from the same t due to precision loss.
+        float next_t_min = nextafterf(t, tmax);
         if (next_t_min <= t) {
-            next_t_min = t + 2e-4f;
+            next_t_min = t + epsilon;
+        }
+        if (next_t_min <= current_t_min) {
+            next_t_min = nextafterf(current_t_min, tmax);
         }
         if (next_t_min <= current_t_min) {
             break;
@@ -232,6 +249,9 @@ __device__ int collect_containing_target_objects(const float3& point, int* outOb
         if ((parity[i] & 1) != 0) {
             if (outCount < maxOutObjects) {
                 outObjectIds[outCount] = candidateObjects[i];
+                if (outTargetHitCounts) {
+                    outTargetHitCounts[outCount] = candidateHitCounts[i];
+                }
             }
             outCount++;
         }
@@ -247,6 +267,19 @@ __device__ int collect_containing_target_objects(const float3& point, int* outOb
         atomicAdd(&mesh_intersection_params.profiling_stats->containment_candidate_toggles, static_cast<unsigned long long>(candidateToggles));
         atomicAdd(&mesh_intersection_params.profiling_stats->containment_candidate_overflow, static_cast<unsigned long long>(candidateOverflow));
         atomicAdd(&mesh_intersection_params.profiling_stats->containment_targets_total, static_cast<unsigned long long>((outCount > maxOutObjects) ? maxOutObjects : outCount));
+    }
+
+    if (outRayHitCount) {
+        *outRayHitCount = hitsFound;
+    }
+    if (outIterations) {
+        *outIterations = iterations;
+    }
+    if (outCandidateCount) {
+        *outCandidateCount = candidateCount;
+    }
+    if (outCandidateOverflow) {
+        *outCandidateOverflow = candidateOverflow;
     }
 
     return (outCount > maxOutObjects) ? maxOutObjects : outCount;
@@ -311,25 +344,62 @@ extern "C" __global__ void __raygen__mesh_containment() {
         mesh_intersection_params.collision_counts[sourceObjectId] = 0;
     }
 
+    if (mesh_intersection_params.enable_pair_hit_tracking &&
+        mesh_intersection_params.pair_target_object_ids &&
+        mesh_intersection_params.pair_target_hit_counts &&
+        mesh_intersection_params.max_pair_targets_per_source > 0) {
+        const int base = sourceObjectId * mesh_intersection_params.max_pair_targets_per_source;
+        for (int i = 0; i < mesh_intersection_params.max_pair_targets_per_source; ++i) {
+            mesh_intersection_params.pair_target_object_ids[base + i] = -1;
+            mesh_intersection_params.pair_target_hit_counts[base + i] = 0U;
+        }
+    }
+
     const int firstTri = mesh_intersection_params.first_triangle_index_per_object[sourceObjectId];
     if (firstTri < 0 || firstTri >= mesh_intersection_params.mesh1_num_triangles) {
         return;
     }
 
     const uint3 triIndices = mesh_intersection_params.mesh1_indices[firstTri];
-    float3 queryPoint = mesh_intersection_params.mesh1_vertices[triIndices.x];
-    if (mesh_intersection_params.containment_query_point_mode == 1) {
-        const float3 v0 = mesh_intersection_params.mesh1_vertices[triIndices.x];
-        const float3 v1 = mesh_intersection_params.mesh1_vertices[triIndices.y];
-        const float3 v2 = mesh_intersection_params.mesh1_vertices[triIndices.z];
-        queryPoint = make_float3(
-            (v0.x + v1.x + v2.x) / 3.0f,
-            (v0.y + v1.y + v2.y) / 3.0f,
-            (v0.z + v1.z + v2.z) / 3.0f
-        );
+    const float3 queryPoint = mesh_intersection_params.mesh1_vertices[triIndices.x];
+    int targetObjects[256];
+    unsigned int targetHitCounts[256];
+    int containmentIterations = 0;
+    int containmentCandidateCount = 0;
+    int containmentCandidateOverflow = 0;
+    const int numTargets = collect_containing_target_objects(
+        queryPoint,
+        targetObjects,
+        256,
+        nullptr,
+        targetHitCounts,
+        &containmentIterations,
+        &containmentCandidateCount,
+        &containmentCandidateOverflow
+    );
+
+    if (mesh_intersection_params.enable_containment_tracking &&
+        mesh_intersection_params.containment_iterations_per_source &&
+        mesh_intersection_params.containment_candidate_count_per_source &&
+        mesh_intersection_params.containment_candidate_overflow_per_source) {
+        mesh_intersection_params.containment_iterations_per_source[sourceObjectId] = static_cast<unsigned int>(containmentIterations);
+        mesh_intersection_params.containment_candidate_count_per_source[sourceObjectId] = static_cast<unsigned int>(containmentCandidateCount);
+        mesh_intersection_params.containment_candidate_overflow_per_source[sourceObjectId] = static_cast<unsigned int>(containmentCandidateOverflow);
     }
-    int targetObjects[32];
-    const int numTargets = collect_containing_target_objects(queryPoint, targetObjects, 32);
+
+    if (mesh_intersection_params.enable_pair_hit_tracking &&
+        mesh_intersection_params.pair_target_object_ids &&
+        mesh_intersection_params.pair_target_hit_counts &&
+        mesh_intersection_params.max_pair_targets_per_source > 0) {
+        const int maxTargets = mesh_intersection_params.max_pair_targets_per_source;
+        const int base = sourceObjectId * maxTargets;
+        const int numTracked = (numTargets < maxTargets) ? numTargets : maxTargets;
+        for (int i = 0; i < numTracked; ++i) {
+            mesh_intersection_params.pair_target_object_ids[base + i] = targetObjects[i];
+            mesh_intersection_params.pair_target_hit_counts[base + i] = targetHitCounts[i];
+        }
+    }
+
     if (numTargets <= 0) {
         return;
     }
