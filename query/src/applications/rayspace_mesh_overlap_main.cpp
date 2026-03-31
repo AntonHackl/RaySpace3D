@@ -29,6 +29,7 @@
 #include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
+#include "app_cli_options.h"
 
 struct QueryResults {
     MeshQueryResult* d_merged_results;
@@ -248,58 +249,50 @@ QueryResults executeTwoPassQuery(
     return {d_merged_results, numUnique};
 }
 
+class MeshOverlapCliOptions : public BenchmarkMeshPairCliOptions {
+public:
+    MeshOverlapCliOptions() : BenchmarkMeshPairCliOptions("mesh_overlap_timing.json") {
+        allowNoExportFlag = true;
+    }
+
+    void printHelp(const char* exeName) const {
+        std::vector<HelpEntry> options;
+        appendMeshPairHelp(options);
+        appendBenchmarkRunHelp(options);
+        appendNoExportHelp(options);
+        appendHelpFlag(options);
+
+        printHelpMessage(
+            exeName,
+            "[--mesh1 <path>] [--mesh2 <path>] [--output <json_output_file>] [--runs <number>] [--ptx <ptx_file>]",
+            "Mesh overlap join query for reporting overlapping object pairs between two datasets.",
+            options
+        );
+    }
+};
+
 
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
     timer.start("Data Reading");
-    
-    std::string mesh1Path = "";
-    std::string mesh2Path = "";
-    std::string outputJsonPath = "mesh_overlap_timing.json";
-    std::string ptxPath = detectPTXPath();
-    int numberOfRuns = 1;
-    bool exportResults = true;
-    int warmupRuns = 2;
-    
-    if (argc > 1) {
-        for (int i = 1; i < argc; ++i) {
-            std::string arg = argv[i];
-            if (arg == "--mesh1" && i + 1 < argc) {
-                mesh1Path = argv[++i];
-            }
-            else if (arg == "--mesh2" && i + 1 < argc) {
-                mesh2Path = argv[++i];
-            }
-            else if (arg == "--output" && i + 1 < argc) {
-                outputJsonPath = argv[++i];
-            }
-            else if (arg == "--ptx" && i + 1 < argc) {
-                ptxPath = argv[++i];
-            }
-            else if (arg == "--runs" && i + 1 < argc) {
-                numberOfRuns = std::atoi(argv[++i]);
-            }
-            else if (arg == "--warmup-runs" && i + 1 < argc) {
-                warmupRuns = std::atoi(argv[++i]);
-            }
-            else if (arg == "--no-export") {
-                exportResults = false;
-            }
-            else if (arg == "--help" || arg == "-h") {
-                std::cout << "Usage: " << argv[0] << " [--mesh1 <path>] [--mesh2 <path>] [--output <json_output_file>] [--runs <number>] [--ptx <ptx_file>]" << std::endl;
-                std::cout << "Options:" << std::endl;
-                std::cout << "  --mesh1 <path>         Path to first mesh dataset (geometry file)" << std::endl;
-                std::cout << "  --mesh2 <path>         Path to second mesh dataset (geometry file)" << std::endl;
-                std::cout << "  --output <path>        Path to JSON file for performance timing output" << std::endl;
-                std::cout << "  --runs <number>        Number of times to run the query (for performance testing)" << std::endl;
-                std::cout << "  --warmup-runs <number> Number of warmup iterations" << std::endl;
-                std::cout << "  --ptx <ptx_file>       Path to compiled PTX file (default: auto-detect)" << std::endl;
-                std::cout << "  --no-export            Do not export results to CSV" << std::endl;
-                std::cout << "  --help, -h             Show this help message" << std::endl;
-                return 0;
-            }
-        }
+    MeshOverlapCliOptions options;
+    options.ptxPath = detectPTXPath();
+    options.parse(argc, argv);
+
+    if (options.helpRequested) {
+        options.printHelp(argv[0]);
+        return 0;
     }
+
+    options.sanitizeRunCounts();
+
+    const std::string& mesh1Path = options.mesh1Path;
+    const std::string& mesh2Path = options.mesh2Path;
+    const std::string& outputJsonPath = options.outputJsonPath;
+    const std::string& ptxPath = options.ptxPath;
+    const int numberOfRuns = options.numberOfRuns;
+    const bool exportResults = options.exportResults;
+    const int warmupRuns = options.warmupRuns;
     
     std::cout << "Mesh-to-Mesh Overlap Join" << std::endl;
     

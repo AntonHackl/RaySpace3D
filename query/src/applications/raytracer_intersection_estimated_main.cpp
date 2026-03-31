@@ -29,6 +29,7 @@
 #include "../timer.h"
 #include "../ptx_utils.h"
 #include "../cuda/estimated_intersection.h"
+#include "app_cli_options.h"
 
 struct QueryResults {
     MeshQueryResult* d_merged_results;
@@ -200,13 +201,10 @@ float calculateGlobalAvgVolRatio(const std::vector<GridCell>& cells) {
     return (float)(totalRatio / totalCount);
 }
 
-int main(int argc, char* argv[]) {
-    PerformanceTimer timer;
-    
-    std::string mesh1Path = "";
-    std::string mesh2Path = "";
-    std::string outputJsonPath = "estimated_intersection_timing.json";
-    std::string ptxPath = detectPTXPath();
+class IntersectionEstimatedCliOptions : public MeshPairCliOptions {
+public:
+    IntersectionEstimatedCliOptions() : MeshPairCliOptions("estimated_intersection_timing.json") {}
+
     std::string queryDirectionArg = "both";
     std::string containmentQueryPointArg = "vertex";
     bool estimateOnly = false;
@@ -216,51 +214,95 @@ int main(int argc, char* argv[]) {
     float hashLoadFactor = 0.5f;
     int overlapMaxIterations = 100;
     int containmentMaxIterations = 512;
-    
-    if (argc > 1) {
-        for (int i = 1; i < argc; ++i) {
-            std::string arg = argv[i];
-            if (arg == "--mesh1" && i + 1 < argc) {
-                mesh1Path = argv[++i];
-            }
-            else if (arg == "--mesh2" && i + 1 < argc) {
-                mesh2Path = argv[++i];
-            }
-            else if (arg == "--output" && i + 1 < argc) {
-                outputJsonPath = argv[++i];
-            }
-            else if (arg == "--ptx" && i + 1 < argc) {
-                ptxPath = argv[++i];
-            }
-            else if (arg == "--gamma" && i + 1 < argc) {
-                gamma = std::stof(argv[++i]);
-            }
-            else if (arg == "--epsilon" && i + 1 < argc) {
-                epsilon = std::stof(argv[++i]);
-            }
-            else if (arg == "--estimate-only") {
-                estimateOnly = true;
-            }
-            else if (arg == "--query-direction" && i + 1 < argc) {
-                queryDirectionArg = argv[++i];
-            }
-            else if (arg == "--containment-query-point" && i + 1 < argc) {
-                containmentQueryPointArg = argv[++i];
-            }
-            else if (arg == "--overlap-max-iterations" && i + 1 < argc) {
-                overlapMaxIterations = std::stoi(argv[++i]);
-            }
-            else if (arg == "--containment-max-iterations" && i + 1 < argc) {
-                containmentMaxIterations = std::stoi(argv[++i]);
-            }
-            else if (arg == "--hash-load-factor" && i + 1 < argc) {
-                hashLoadFactor = std::stof(argv[++i]);
-            }
-            else if (arg == "--enable-profiling-stats") {
-                enableProfilingStats = true;
-            }
-        }
+
+    void printHelp(const char* exeName) const {
+        std::vector<HelpEntry> options;
+        appendMeshPairHelp(options);
+        options.emplace_back("--gamma <float>", "Estimation gamma (default: 0.8)");
+        options.emplace_back("--epsilon <float>", "Estimation epsilon (default: 0.001)");
+        options.emplace_back("--estimate-only", "Run only selectivity estimation");
+        options.emplace_back("--query-direction <both|mesh1_to_mesh2|mesh2_to_mesh1>", "Control query direction (default: both)");
+        options.emplace_back("--containment-query-point <vertex|centroid>", "Containment query point mode (default: vertex)");
+        options.emplace_back("--overlap-max-iterations <int>", "Overlap ray iteration cap (default: 100)");
+        options.emplace_back("--containment-max-iterations <int>", "Containment ray iteration cap (default: 512)");
+        options.emplace_back("--hash-load-factor <float>", "Hash load factor in (0,1] (default: 0.5)");
+        options.emplace_back("--enable-profiling-stats", "Enable device-side profiling counters");
+        appendHelpFlag(options);
+
+        printHelpMessage(
+            exeName,
+            "--mesh1 <path> --mesh2 <path> [options]",
+            "Intersection estimated query: overlap plus containment passes with hash-based deduplication.",
+            options
+        );
     }
+
+protected:
+    bool parseApplicationOption(const std::string& arg, int& i, int argc, char* argv[]) override {
+        if (arg == "--gamma" && i + 1 < argc) {
+            gamma = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--epsilon" && i + 1 < argc) {
+            epsilon = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--estimate-only") {
+            estimateOnly = true;
+            return true;
+        }
+        if (arg == "--query-direction" && i + 1 < argc) {
+            queryDirectionArg = argv[++i];
+            return true;
+        }
+        if (arg == "--containment-query-point" && i + 1 < argc) {
+            containmentQueryPointArg = argv[++i];
+            return true;
+        }
+        if (arg == "--overlap-max-iterations" && i + 1 < argc) {
+            overlapMaxIterations = std::stoi(argv[++i]);
+            return true;
+        }
+        if (arg == "--containment-max-iterations" && i + 1 < argc) {
+            containmentMaxIterations = std::stoi(argv[++i]);
+            return true;
+        }
+        if (arg == "--hash-load-factor" && i + 1 < argc) {
+            hashLoadFactor = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--enable-profiling-stats") {
+            enableProfilingStats = true;
+            return true;
+        }
+        return false;
+    }
+};
+
+int main(int argc, char* argv[]) {
+    PerformanceTimer timer;
+    IntersectionEstimatedCliOptions options;
+    options.ptxPath = detectPTXPath();
+    options.parse(argc, argv);
+
+    if (options.helpRequested) {
+        options.printHelp(argv[0]);
+        return 0;
+    }
+
+    const std::string& mesh1Path = options.mesh1Path;
+    const std::string& mesh2Path = options.mesh2Path;
+    const std::string& outputJsonPath = options.outputJsonPath;
+    const std::string& ptxPath = options.ptxPath;
+    const std::string& queryDirectionArg = options.queryDirectionArg;
+    const std::string& containmentQueryPointArg = options.containmentQueryPointArg;
+    const bool estimateOnly = options.estimateOnly;
+    const bool enableProfilingStats = options.enableProfilingStats;
+    const float gamma = options.gamma;
+    const float epsilon = options.epsilon;
+    const float hashLoadFactor = options.hashLoadFactor;
+    const int overlapMaxIterations = options.overlapMaxIterations;
+    const int containmentMaxIterations = options.containmentMaxIterations;
 
     QueryDirection queryDirection = QueryDirection::Both;
     int containmentQueryPointMode = 0;
@@ -283,7 +325,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    if (mesh1Path.empty() || mesh2Path.empty()) {
+    if (!options.hasRequiredMeshInputs()) {
         std::cerr << "Usage: " << argv[0] << " --mesh1 <path> --mesh2 <path> [options]" << std::endl;
         return 1;
     }

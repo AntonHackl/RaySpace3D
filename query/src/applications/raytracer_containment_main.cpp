@@ -25,6 +25,7 @@
 #include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
+#include "app_cli_options.h"
 
 // ---------------------------------------------------------------------
 // Containment query
@@ -45,51 +46,63 @@
 //      pair was NOT flagged in Phase 1 → containment.
 // ---------------------------------------------------------------------
 
+class ContainmentCliOptions : public BenchmarkMeshPairCliOptions {
+public:
+    ContainmentCliOptions() : BenchmarkMeshPairCliOptions("containment_timing.json") {
+        allowNoExportFlag = true;
+    }
+
+    void printHelp(const char* exeName) const {
+        std::vector<HelpEntry> options;
+        appendMeshPairHelp(
+            options,
+            "Dataset A (container meshes)",
+            "Dataset B (objects tested for containment)"
+        );
+        appendBenchmarkRunHelp(options);
+        appendNoExportHelp(options);
+        appendHelpFlag(options);
+
+        printHelpMessage(
+            exeName,
+            "--mesh1 <A_dataset> --mesh2 <B_dataset> [options]",
+            "Containment query: finds pairs where B objects are fully contained in A objects.",
+            options
+        );
+    }
+};
+
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
     timer.start("Data Reading");
 
-    // ---------------------------------------------------------------
-    // CLI
-    // ---------------------------------------------------------------
-    std::string meshAPath;           // dataset A (containers)
-    std::string meshBPath;           // dataset B (possibly contained)
-    std::string outputJsonPath = "containment_timing.json";
-    std::string ptxPath        = detectPTXPath();
-    int  numberOfRuns  = 1;
-    bool exportResults = true;
-    int  warmupRuns    = 2;
+    ContainmentCliOptions options;
+    options.ptxPath = detectPTXPath();
+    options.parse(argc, argv);
 
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if      (arg == "--mesh1"  && i+1 < argc) meshAPath       = argv[++i];
-        else if (arg == "--mesh2"  && i+1 < argc) meshBPath       = argv[++i];
-        else if (arg == "--output" && i+1 < argc) outputJsonPath  = argv[++i];
-        else if (arg == "--ptx"    && i+1 < argc) ptxPath         = argv[++i];
-        else if (arg == "--runs"   && i+1 < argc) numberOfRuns    = std::atoi(argv[++i]);
-        else if (arg == "--warmup-runs" && i+1 < argc) warmupRuns = std::atoi(argv[++i]);
-        else if (arg == "--no-export") exportResults = false;
-        else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: " << argv[0]
-                      << " --mesh1 <A_dataset> --mesh2 <B_dataset> [options]\n"
-                      << "Options:\n"
-                      << "  --mesh1 <path>         Dataset A (container meshes)\n"
-                      << "  --mesh2 <path>         Dataset B (objects to test for containment)\n"
-                      << "  --output <path>        JSON timing output        [containment_timing.json]\n"
-                      << "  --runs <n>             Benchmark repetitions     [1]\n"
-                      << "  --warmup-runs <n>      Warmup iterations         [2]\n"
-                      << "  --ptx <path>           PTX file                  [auto-detect]\n"
-                      << "  --no-export            Skip CSV export\n"
-                      << "  --help, -h             This message\n";
-            return 0;
-        }
+    if (options.helpRequested) {
+        options.printHelp(argv[0]);
+        return 0;
     }
+
+    options.sanitizeRunCounts();
+
+    const std::string& meshAPath = options.mesh1Path;
+    const std::string& meshBPath = options.mesh2Path;
+    const std::string& outputJsonPath = options.outputJsonPath;
+    const std::string& ptxPath = options.ptxPath;
+    const int numberOfRuns = options.numberOfRuns;
+    const int warmupRuns = options.warmupRuns;
+    const bool exportResults = options.exportResults;
 
     std::cout << "=== Mesh Containment Query ===" << std::endl;
     std::cout << "(checks which B-objects are fully contained inside A-objects)" << std::endl;
 
-    if (meshAPath.empty()) { std::cerr << "Error: --mesh1 (dataset A) required\n"; return 1; }
-    if (meshBPath.empty()) { std::cerr << "Error: --mesh2 (dataset B) required\n"; return 1; }
+    if (!options.hasRequiredMeshInputs()) {
+        if (meshAPath.empty()) { std::cerr << "Error: --mesh1 (dataset A) required\n"; }
+        if (meshBPath.empty()) { std::cerr << "Error: --mesh2 (dataset B) required\n"; }
+        return 1;
+    }
 
     // ---------------------------------------------------------------
     // Load geometry

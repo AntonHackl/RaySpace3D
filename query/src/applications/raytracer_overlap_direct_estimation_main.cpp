@@ -30,6 +30,7 @@
 #include "../timer.h"
 #include "../ptx_utils.h"
 #include "../cuda/estimated_overlap.h"
+#include "app_cli_options.h"
 
 struct QueryResults {
     MeshQueryResult* d_merged_results;
@@ -217,104 +218,122 @@ float calculateGlobalAvgVolRatio(const std::vector<GridCell>& cells) {
     return (float)(totalRatio / totalCount);
 }
 
-int main(int argc, char* argv[]) {
-    PerformanceTimer timer;
-    
-    std::string mesh1Path = "";
-    std::string mesh2Path = "";
-    std::string outputJsonPath = "estimated_overlap_timing.json";
-    std::string ptxPath = detectPTXPath();
-    int numberOfRuns = 1;
-    int warmupRuns = 2;
+class OverlapDirectCliOptions : public BenchmarkMeshPairCliOptions {
+public:
+    OverlapDirectCliOptions() : BenchmarkMeshPairCliOptions("estimated_overlap_timing.json") {}
+
     bool estimateOnly = false;
     float gamma = 0.8f;
     float epsilon = 0.001f;
     QueryDirection queryDirection = QueryDirection::Both;
-    std::string pairsOutputPath = "";
+    std::string pairsOutputPath;
     bool trackHashContention = false;
     unsigned long long manualHashTableSize = 0;
     float hashTableFreeMemFraction = 0.0f;
-    
-    if (argc > 1) {
-        for (int i = 1; i < argc; ++i) {
-            std::string arg = argv[i];
-            if (arg == "--help" || arg == "-h") {
-                std::cout << "Usage: " << argv[0] << " --mesh1 <path> --mesh2 <path> [options]" << std::endl;
-                std::cout << "Options:" << std::endl;
-                std::cout << "  --mesh1 <path>         Path to first mesh dataset (geometry file)" << std::endl;
-                std::cout << "  --mesh2 <path>         Path to second mesh dataset (geometry file)" << std::endl;
-                std::cout << "  --output <path>        Path to JSON file for performance timing output (default: estimated_overlap_timing.json)" << std::endl;
-                std::cout << "  --ptx <ptx_file>       Path to compiled PTX file (default: auto-detect)" << std::endl;
-                std::cout << "  --runs <number>        Number of measured query runs (default: 1)" << std::endl;
-                std::cout << "  --warmup-runs <number> Number of warmup iterations (default: 2)" << std::endl;
-                std::cout << "  --gamma <float>        Gamma parameter for estimation (default: 0.8)" << std::endl;
-                std::cout << "  --epsilon <float>      Epsilon parameter for estimation (default: 0.001)" << std::endl;
-                std::cout << "  --query-direction <d>  Query direction: both|mesh1_to_mesh2|mesh2_to_mesh1 (default: both)" << std::endl;
-                std::cout << "  --pairs-output <path>  Optional CSV export path for unique result pairs" << std::endl;
-                std::cout << "  --track-hash-contention Track hash accesses and contention rate" << std::endl;
-                std::cout << "  --hash-table-size <ull> Override hash table size (number of slots); 0 = auto-compute" << std::endl;
-                std::cout << "  --hash-table-free-mem-fraction <f> Use f (0,1] of currently free GPU memory for hash table sizing" << std::endl;
-                std::cout << "  --estimate-only        Only run selectivity estimation, skip actual query" << std::endl;
-                std::cout << "  --help, -h             Show this help message" << std::endl;
-                return 0;
-            }
-            if (arg == "--mesh1" && i + 1 < argc) {
-                mesh1Path = argv[++i];
-            }
-            else if (arg == "--mesh2" && i + 1 < argc) {
-                mesh2Path = argv[++i];
-            }
-            else if (arg == "--output" && i + 1 < argc) {
-                outputJsonPath = argv[++i];
-            }
-            else if (arg == "--ptx" && i + 1 < argc) {
-                ptxPath = argv[++i];
-            }
-            else if (arg == "--runs" && i + 1 < argc) {
-                numberOfRuns = std::atoi(argv[++i]);
-            }
-            else if (arg == "--warmup-runs" && i + 1 < argc) {
-                warmupRuns = std::atoi(argv[++i]);
-            }
-            else if (arg == "--gamma" && i + 1 < argc) {
-                gamma = std::stof(argv[++i]);
-            }
-            else if (arg == "--epsilon" && i + 1 < argc) {
-                epsilon = std::stof(argv[++i]);
-            }
-            else if (arg == "--query-direction" && i + 1 < argc) {
-                std::string directionRaw = argv[++i];
-                if (!parseDirection(directionRaw, queryDirection)) {
-                    std::cerr << "Error: Invalid --query-direction value: " << directionRaw
-                              << ". Expected one of: both, mesh1_to_mesh2, mesh2_to_mesh1" << std::endl;
-                    return 1;
-                }
-            }
-            else if (arg == "--pairs-output" && i + 1 < argc) {
-                pairsOutputPath = argv[++i];
-            }
-            else if (arg == "--track-hash-contention") {
-                trackHashContention = true;
-            }
-            else if (arg == "--hash-table-size" && i + 1 < argc) {
-                manualHashTableSize = std::stoull(argv[++i]);
-            }
-            else if (arg == "--hash-table-free-mem-fraction" && i + 1 < argc) {
-                hashTableFreeMemFraction = std::stof(argv[++i]);
-            }
-            else if (arg == "--estimate-only") {
-                estimateOnly = true;
-            }
-        }
+
+    bool valid = true;
+
+    void printHelp(const char* exeName) const {
+        std::vector<HelpEntry> options;
+        appendMeshPairHelp(options);
+        appendBenchmarkRunHelp(options);
+        options.emplace_back("--gamma <float>", "Gamma parameter for estimation (default: 0.8)");
+        options.emplace_back("--epsilon <float>", "Epsilon parameter for estimation (default: 0.001)");
+        options.emplace_back("--query-direction <d>", "Query direction: both|mesh1_to_mesh2|mesh2_to_mesh1 (default: both)");
+        options.emplace_back("--pairs-output <path>", "Optional CSV export path for unique result pairs");
+        options.emplace_back("--track-hash-contention", "Track hash accesses and contention rate");
+        options.emplace_back("--hash-table-size <ull>", "Override hash table size (slots); 0 = auto-compute");
+        options.emplace_back("--hash-table-free-mem-fraction <f>", "Use f in (0,1] of free GPU memory for hash table sizing");
+        options.emplace_back("--estimate-only", "Only run selectivity estimation, skip actual query");
+        appendHelpFlag(options);
+
+        printHelpMessage(
+            exeName,
+            "--mesh1 <path> --mesh2 <path> [options]",
+            "Overlap direct-estimation query with optional pair export and hash contention diagnostics.",
+            options
+        );
     }
-    
-    if (mesh1Path.empty() || mesh2Path.empty()) {
+
+protected:
+    bool parseApplicationOption(const std::string& arg, int& i, int argc, char* argv[]) override {
+        if (arg == "--gamma" && i + 1 < argc) {
+            gamma = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--epsilon" && i + 1 < argc) {
+            epsilon = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--query-direction" && i + 1 < argc) {
+            const std::string directionRaw = argv[++i];
+            if (!parseDirection(directionRaw, queryDirection)) {
+                std::cerr << "Error: Invalid --query-direction value: " << directionRaw
+                          << ". Expected one of: both, mesh1_to_mesh2, mesh2_to_mesh1" << std::endl;
+                valid = false;
+            }
+            return true;
+        }
+        if (arg == "--pairs-output" && i + 1 < argc) {
+            pairsOutputPath = argv[++i];
+            return true;
+        }
+        if (arg == "--track-hash-contention") {
+            trackHashContention = true;
+            return true;
+        }
+        if (arg == "--hash-table-size" && i + 1 < argc) {
+            manualHashTableSize = std::stoull(argv[++i]);
+            return true;
+        }
+        if (arg == "--hash-table-free-mem-fraction" && i + 1 < argc) {
+            hashTableFreeMemFraction = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--estimate-only") {
+            estimateOnly = true;
+            return true;
+        }
+        return false;
+    }
+};
+
+int main(int argc, char* argv[]) {
+    PerformanceTimer timer;
+    OverlapDirectCliOptions options;
+    options.ptxPath = detectPTXPath();
+    options.parse(argc, argv);
+
+    if (options.helpRequested) {
+        options.printHelp(argv[0]);
+        return 0;
+    }
+    if (!options.valid) {
+        return 1;
+    }
+
+    options.sanitizeRunCounts();
+
+    const std::string& mesh1Path = options.mesh1Path;
+    const std::string& mesh2Path = options.mesh2Path;
+    const std::string& outputJsonPath = options.outputJsonPath;
+    const std::string& ptxPath = options.ptxPath;
+    const int numberOfRuns = options.numberOfRuns;
+    const int warmupRuns = options.warmupRuns;
+    const bool estimateOnly = options.estimateOnly;
+    const float gamma = options.gamma;
+    const float epsilon = options.epsilon;
+    const QueryDirection queryDirection = options.queryDirection;
+    const std::string& pairsOutputPath = options.pairsOutputPath;
+    const bool trackHashContention = options.trackHashContention;
+    const unsigned long long manualHashTableSize = options.manualHashTableSize;
+    const float hashTableFreeMemFraction = options.hashTableFreeMemFraction;
+
+    if (!options.hasRequiredMeshInputs()) {
         std::cerr << "Usage: " << argv[0] << " --mesh1 <path> --mesh2 <path> [options]" << std::endl;
         return 1;
     }
 
-    if (numberOfRuns < 1) numberOfRuns = 1;
-    if (warmupRuns < 0) warmupRuns = 0;
     if (hashTableFreeMemFraction < 0.0f || hashTableFreeMemFraction > 1.0f) {
         std::cerr << "Error: --hash-table-free-mem-fraction must be in [0, 1]." << std::endl;
         return 1;
