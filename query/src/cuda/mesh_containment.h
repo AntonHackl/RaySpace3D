@@ -33,4 +33,16 @@ struct MeshContainmentLaunchParams {
     // Containment result hash table (Phase 2 output)
     unsigned long long* containment_hash_table;
     int                 containment_hash_table_size;
+
+    // Runtime control for point-in-mesh mode.
+    int use_anyhit_point_in_mesh;
+    int trace_phase; // 0=edge phase, 1=point-in-mesh phase
+
+    // AnyHit point-in-mesh scratch buffers (indexed by B object).
+    int anyhit_max_unique_a_objects;
+    int* anyhit_a_ids;
+    unsigned int* anyhit_a_parity;
+    unsigned int* anyhit_num_unique;
+    int* anyhit_last_obj;
+    unsigned int* anyhit_last_t_bits;
 };

@@ -99,7 +99,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # CUDA Sources
 set(CUDA_DIR ${SRC_DIR}/cuda)
-set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DIR}/mesh_overlap_edges.cu ${CUDA_DIR}/mesh_intersection.cu)
+set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DIR}/mesh_overlap_edges.cu ${CUDA_DIR}/mesh_intersection.cu ${CUDA_DIR}/mesh_intersection_anyhit.cu)
 set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
 set(MESH_QUERY_DEDUP_SOURCE ${CUDA_DIR}/mesh_query_deduplication.cu)
 set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
@@ -329,6 +329,7 @@ set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
 set(MESH_OVERLAP_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}")
 set(MESH_OVERLAP_EDGES_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap_edges${OPTIX_MODULE_EXTENSION}")
 set(MESH_INTERSECTION_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}")
+set(MESH_INTERSECTION_ANYHIT_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_intersection_anyhit${OPTIX_MODULE_EXTENSION}")
 set(MESH_CONTAINMENT_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_containment${OPTIX_MODULE_EXTENSION}")
 
 # Copy PTX artifacts into the runtime bin directory whenever PTX outputs change.
@@ -349,6 +350,9 @@ add_custom_target(copy_ptx ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MESH_INTERSECTION_PTX_FILE}"
         "${RUNTIME_PTX_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MESH_INTERSECTION_ANYHIT_PTX_FILE}"
+        "${RUNTIME_PTX_DIR}/mesh_intersection_anyhit${OPTIX_MODULE_EXTENSION}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MESH_CONTAINMENT_PTX_FILE}"
         "${RUNTIME_PTX_DIR}/mesh_containment${OPTIX_MODULE_EXTENSION}"
@@ -381,6 +385,12 @@ add_custom_command(TARGET raytracer_intersection_estimated POST_BUILD
     "${MESH_INTERSECTION_PTX_FILE}"
     "$<TARGET_FILE_DIR:raytracer_intersection_estimated>/mesh_intersection${OPTIX_MODULE_EXTENSION}"
     COMMENT "Copying mesh_intersection.ptx...")
+
+add_custom_command(TARGET raytracer_intersection_estimated POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${MESH_INTERSECTION_ANYHIT_PTX_FILE}"
+    "$<TARGET_FILE_DIR:raytracer_intersection_estimated>/mesh_intersection_anyhit${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying mesh_intersection_anyhit.ptx...")
 
 # Overlap Estimated
 add_dependencies(raytracer_overlap_estimated copy_ptx)

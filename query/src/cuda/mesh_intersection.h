@@ -58,6 +58,7 @@ struct MeshIntersectionLaunchParams {
     MeshQueryResult* results;
     int pass;
     int swap_result_ids; // 0 = (src_obj, hit_obj), 1 = (hit_obj, src_obj)
+    int use_anyhit_containment; // 0 = legacy closest-hit loop, 1 = AnyHit accumulation path
 
     // Runtime controls and optional profiling.
     int overlap_max_iterations;
@@ -76,4 +77,12 @@ struct MeshIntersectionLaunchParams {
     unsigned int* containment_iterations_per_source;
     unsigned int* containment_candidate_count_per_source;
     unsigned int* containment_candidate_overflow_per_source;
+
+    // Optional AnyHit containment scratch buffers.
+    int anyhit_max_pair_targets_per_source;
+    int* anyhit_candidate_object_ids;
+    unsigned int* anyhit_candidate_parity;
+    unsigned int* anyhit_candidate_hit_counts;
+    unsigned int* anyhit_candidate_count_per_source;
+    unsigned int* anyhit_candidate_overflow_per_source;
 };

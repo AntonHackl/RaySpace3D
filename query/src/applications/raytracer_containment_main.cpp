@@ -52,6 +52,8 @@ public:
         allowNoExportFlag = true;
     }
 
+    bool useAnyhitPointInMesh = false;
+
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
         appendMeshPairHelp(
@@ -60,6 +62,7 @@ public:
             "Dataset B (objects tested for containment)"
         );
         appendBenchmarkRunHelp(options);
+        options.emplace_back("--use-anyhit-point-in-mesh", "Use AnyHit shader accumulation for point-in-mesh parity");
         appendNoExportHelp(options);
         appendHelpFlag(options);
 
@@ -69,6 +72,18 @@ public:
             "Containment query: finds pairs where B objects are fully contained in A objects.",
             options
         );
+    }
+
+protected:
+    bool parseApplicationOption(const std::string& arg, int& i, int argc, char* argv[]) override {
+        (void)i;
+        (void)argc;
+        (void)argv;
+        if (arg == "--use-anyhit-point-in-mesh") {
+            useAnyhitPointInMesh = true;
+            return true;
+        }
+        return false;
     }
 };
 
@@ -94,9 +109,11 @@ int main(int argc, char* argv[]) {
     const int numberOfRuns = options.numberOfRuns;
     const int warmupRuns = options.warmupRuns;
     const bool exportResults = options.exportResults;
+    const bool useAnyhitPointInMesh = options.useAnyhitPointInMesh;
 
     std::cout << "=== Mesh Containment Query ===" << std::endl;
     std::cout << "(checks which B-objects are fully contained inside A-objects)" << std::endl;
+    std::cout << "Point-in-mesh mode: " << (useAnyhitPointInMesh ? "anyhit" : "closesthit") << std::endl;
 
     if (!options.hasRequiredMeshInputs()) {
         if (meshAPath.empty()) { std::cerr << "Error: --mesh1 (dataset A) required\n"; }
@@ -185,6 +202,21 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_bFirstVertices, bFirstVertices.data(),
                           numBObjects * sizeof(float3), cudaMemcpyHostToDevice));
 
+    constexpr int kAnyhitMaxUniqueAObjects = 512;
+    int* d_anyhit_a_ids = nullptr;
+    unsigned int* d_anyhit_a_parity = nullptr;
+    unsigned int* d_anyhit_num_unique = nullptr;
+    int* d_anyhit_last_obj = nullptr;
+    unsigned int* d_anyhit_last_t_bits = nullptr;
+    if (useAnyhitPointInMesh) {
+        const size_t slots = static_cast<size_t>(numBObjects) * static_cast<size_t>(kAnyhitMaxUniqueAObjects);
+        CUDA_CHECK(cudaMalloc(&d_anyhit_a_ids, slots * sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_anyhit_a_parity, slots * sizeof(unsigned int)));
+        CUDA_CHECK(cudaMalloc(&d_anyhit_num_unique, numBObjects * sizeof(unsigned int)));
+        CUDA_CHECK(cudaMalloc(&d_anyhit_last_obj, numBObjects * sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_anyhit_last_t_bits, numBObjects * sizeof(unsigned int)));
+    }
+
     int intersectionHTSize  = 16777216;  // 16 M slots ≈ 128 MB
     int containmentHTSize   = 16777216;
 
@@ -222,6 +254,14 @@ int main(int argc, char* argv[]) {
         params.b_num_objects           = numBObjects;
         params.containment_hash_table       = d_containmentHT;
         params.containment_hash_table_size  = containmentHTSize;
+        params.use_anyhit_point_in_mesh = useAnyhitPointInMesh ? 1 : 0;
+        params.trace_phase = 0;
+        params.anyhit_max_unique_a_objects = kAnyhitMaxUniqueAObjects;
+        params.anyhit_a_ids = d_anyhit_a_ids;
+        params.anyhit_a_parity = d_anyhit_a_parity;
+        params.anyhit_num_unique = d_anyhit_num_unique;
+        params.anyhit_last_obj = d_anyhit_last_obj;
+        params.anyhit_last_t_bits = d_anyhit_last_t_bits;
 
         launcher.launchEdgeCheck(params, bNumEdges);
 
@@ -235,12 +275,14 @@ int main(int argc, char* argv[]) {
         params.target_handle           = bAS.getHandle();
         params.target_triangle_to_object = bUploader.getTriangleToObject();
         params.swap_ids                = 1;
+        params.trace_phase = 0;
 
         launcher.launchEdgeCheck(params, aNumEdges);
 
         // Phase 2: Point-in-mesh
         params.target_handle             = aAS.getHandle();
         params.target_triangle_to_object = aUploader.getTriangleToObject();
+        params.trace_phase = 1;
 
         launcher.launchPointInMesh(params, numBObjects);
 
@@ -316,6 +358,11 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_intersectionHT));
     CUDA_CHECK(cudaFree(d_containmentHT));
     CUDA_CHECK(cudaFree(d_bFirstVertices));
+    if (d_anyhit_num_unique) CUDA_CHECK(cudaFree(d_anyhit_num_unique));
+    if (d_anyhit_a_parity) CUDA_CHECK(cudaFree(d_anyhit_a_parity));
+    if (d_anyhit_a_ids) CUDA_CHECK(cudaFree(d_anyhit_a_ids));
+    if (d_anyhit_last_t_bits) CUDA_CHECK(cudaFree(d_anyhit_last_t_bits));
+    if (d_anyhit_last_obj) CUDA_CHECK(cudaFree(d_anyhit_last_obj));
     PrecomputedEdgeData::freeEdgeData(aEdgeData);
     PrecomputedEdgeData::freeEdgeData(bEdgeData);
 

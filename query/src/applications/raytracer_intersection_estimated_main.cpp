@@ -224,6 +224,7 @@ public:
     float hashLoadFactor = 0.5f;
     int overlapMaxIterations = 100;
     int containmentMaxIterations = 1024;
+    bool useAnyhitContainment = false;
 
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
@@ -234,6 +235,7 @@ public:
         options.emplace_back("--query-direction <both|mesh1_to_mesh2|mesh2_to_mesh1>", "Control query direction (default: both)");
         options.emplace_back("--overlap-max-iterations <int>", "Overlap ray iteration cap (default: 100)");
         options.emplace_back("--containment-max-iterations <int>", "Containment ray iteration cap (default: 1024)");
+        options.emplace_back("--use-anyhit-containment", "Use AnyHit accumulation for containment rays");
         options.emplace_back("--hash-load-factor <float>", "Hash load factor in (0,1] (default: 0.5)");
         options.emplace_back("--enable-profiling-stats", "Enable device-side profiling counters");
         options.emplace_back("--pairs-output <path>", "Intersection pairs CSV path (default: intersection_pairs.csv)");
@@ -273,6 +275,10 @@ protected:
         }
         if (arg == "--containment-max-iterations" && i + 1 < argc) {
             containmentMaxIterations = std::stoi(argv[++i]);
+            return true;
+        }
+        if (arg == "--use-anyhit-containment") {
+            useAnyhitContainment = true;
             return true;
         }
         if (arg == "--hash-load-factor" && i + 1 < argc) {
@@ -331,6 +337,7 @@ int main(int argc, char* argv[]) {
     const float hashLoadFactor = options.hashLoadFactor;
     const int overlapMaxIterations = options.overlapMaxIterations;
     const int containmentMaxIterations = options.containmentMaxIterations;
+    const bool useAnyhitContainment = options.useAnyhitContainment;
 
     QueryDirection queryDirection = QueryDirection::Both;
     try {
@@ -551,6 +558,31 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_first_triangle_mesh1, firstTriangleMesh1.data(), mesh1NumObjects * sizeof(int), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_first_triangle_mesh2, firstTriangleMesh2.data(), mesh2NumObjects * sizeof(int), cudaMemcpyHostToDevice));
 
+    constexpr int kAnyhitMaxTargetsPerSource = 256;
+    int* d_anyhit_candidate_object_ids_mesh1 = nullptr;
+    unsigned int* d_anyhit_candidate_parity_mesh1 = nullptr;
+    unsigned int* d_anyhit_candidate_hit_counts_mesh1 = nullptr;
+    unsigned int* d_anyhit_candidate_count_mesh1 = nullptr;
+    unsigned int* d_anyhit_candidate_overflow_mesh1 = nullptr;
+    int* d_anyhit_candidate_object_ids_mesh2 = nullptr;
+    unsigned int* d_anyhit_candidate_parity_mesh2 = nullptr;
+    unsigned int* d_anyhit_candidate_hit_counts_mesh2 = nullptr;
+    unsigned int* d_anyhit_candidate_count_mesh2 = nullptr;
+    unsigned int* d_anyhit_candidate_overflow_mesh2 = nullptr;
+
+    const size_t anyhitSlotsMesh1 = static_cast<size_t>(mesh1NumObjects) * static_cast<size_t>(kAnyhitMaxTargetsPerSource);
+    const size_t anyhitSlotsMesh2 = static_cast<size_t>(mesh2NumObjects) * static_cast<size_t>(kAnyhitMaxTargetsPerSource);
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_object_ids_mesh1, anyhitSlotsMesh1 * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_parity_mesh1, anyhitSlotsMesh1 * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_hit_counts_mesh1, anyhitSlotsMesh1 * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_count_mesh1, mesh1NumObjects * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_overflow_mesh1, mesh1NumObjects * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_object_ids_mesh2, anyhitSlotsMesh2 * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_parity_mesh2, anyhitSlotsMesh2 * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_hit_counts_mesh2, anyhitSlotsMesh2 * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_count_mesh2, mesh2NumObjects * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_anyhit_candidate_overflow_mesh2, mesh2NumObjects * sizeof(unsigned int)));
+
     MeshIntersectionLaunchParams params1{};
     params1.mesh1_vertices = mesh1Uploader.getVertices();
     params1.mesh1_indices = mesh1Uploader.getIndices();
@@ -601,12 +633,26 @@ int main(int argc, char* argv[]) {
     params1.overlap_max_iterations = overlapMaxIterations;
     params1.containment_max_iterations = containmentMaxIterations;
     params1.profiling_enabled = enableProfilingStats ? 1 : 0;
+    params1.use_anyhit_containment = useAnyhitContainment ? 1 : 0;
     params1.profiling_stats = d_profiling_stats;
+    params1.anyhit_max_pair_targets_per_source = kAnyhitMaxTargetsPerSource;
+    params1.anyhit_candidate_object_ids = d_anyhit_candidate_object_ids_mesh1;
+    params1.anyhit_candidate_parity = d_anyhit_candidate_parity_mesh1;
+    params1.anyhit_candidate_hit_counts = d_anyhit_candidate_hit_counts_mesh1;
+    params1.anyhit_candidate_count_per_source = d_anyhit_candidate_count_mesh1;
+    params1.anyhit_candidate_overflow_per_source = d_anyhit_candidate_overflow_mesh1;
 
     params2.overlap_max_iterations = overlapMaxIterations;
     params2.containment_max_iterations = containmentMaxIterations;
     params2.profiling_enabled = enableProfilingStats ? 1 : 0;
+    params2.use_anyhit_containment = useAnyhitContainment ? 1 : 0;
     params2.profiling_stats = d_profiling_stats;
+    params2.anyhit_max_pair_targets_per_source = kAnyhitMaxTargetsPerSource;
+    params2.anyhit_candidate_object_ids = d_anyhit_candidate_object_ids_mesh2;
+    params2.anyhit_candidate_parity = d_anyhit_candidate_parity_mesh2;
+    params2.anyhit_candidate_hit_counts = d_anyhit_candidate_hit_counts_mesh2;
+    params2.anyhit_candidate_count_per_source = d_anyhit_candidate_count_mesh2;
+    params2.anyhit_candidate_overflow_per_source = d_anyhit_candidate_overflow_mesh2;
 
     // Allocate and configure pair-hit tracking
     PairHitTrackingBuffers pairHitBuffers;
@@ -705,6 +751,16 @@ int main(int argc, char* argv[]) {
     }
     pairHitBuffers.free();
     containmentTrackingBuffers.free();
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_object_ids_mesh1));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_parity_mesh1));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_hit_counts_mesh1));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_count_mesh1));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_overflow_mesh1));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_object_ids_mesh2));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_parity_mesh2));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_hit_counts_mesh2));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_count_mesh2));
+    CUDA_CHECK(cudaFree(d_anyhit_candidate_overflow_mesh2));
     CUDA_CHECK(cudaFree(d_hash_table));
     CUDA_CHECK(cudaFree(results.d_merged_results));
     CUDA_CHECK(cudaFree(d_first_triangle_mesh1));

@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include "../optix/OptixHelpers.h"
 #include <math.h>
-#include "optix_common_shaders.cuh"
 
 extern "C" __constant__ MeshContainmentLaunchParams containment_params;
 
@@ -145,6 +144,80 @@ extern "C" __global__ void __raygen__check_edges() {
 
 #define MAX_UNIQUE_A_OBJECTS 512
 
+extern "C" __global__ void __miss__ms() {
+}
+
+extern "C" __global__ void __closesthit__ch() {
+    const float t = optixGetRayTmax();
+    const unsigned int triangleIndex = optixGetPrimitiveIndex();
+
+    optixSetPayload_0(1);
+    optixSetPayload_1(__float_as_uint(t));
+    optixSetPayload_2(triangleIndex);
+}
+
+extern "C" __global__ void __anyhit__ah() {
+    if (containment_params.use_anyhit_point_in_mesh == 0 || containment_params.trace_phase != 1) {
+        return;
+    }
+
+    const unsigned int b_obj = optixGetPayload_0();
+    if (b_obj >= static_cast<unsigned int>(containment_params.b_num_objects)) {
+        optixIgnoreIntersection();
+        return;
+    }
+
+    const int maxUnique = containment_params.anyhit_max_unique_a_objects;
+    if (maxUnique <= 0 ||
+        containment_params.anyhit_a_ids == nullptr ||
+        containment_params.anyhit_a_parity == nullptr ||
+        containment_params.anyhit_num_unique == nullptr ||
+        containment_params.anyhit_last_obj == nullptr ||
+        containment_params.anyhit_last_t_bits == nullptr) {
+        optixIgnoreIntersection();
+        return;
+    }
+
+    const unsigned int tri = optixGetPrimitiveIndex();
+    const int a_obj = containment_params.target_triangle_to_object[tri];
+    const float t = optixGetRayTmax();
+
+    const int lastObj = containment_params.anyhit_last_obj[b_obj];
+    const unsigned int lastTBits = containment_params.anyhit_last_t_bits[b_obj];
+    if (lastObj == a_obj && lastTBits != 0xFFFFFFFFU) {
+        const float lastT = __uint_as_float(lastTBits);
+        if (fabsf(t - lastT) <= 1e-5f) {
+            containment_params.anyhit_last_t_bits[b_obj] = __float_as_uint(t);
+            optixIgnoreIntersection();
+            return;
+        }
+    }
+
+    containment_params.anyhit_last_obj[b_obj] = a_obj;
+    containment_params.anyhit_last_t_bits[b_obj] = __float_as_uint(t);
+
+    const int base = static_cast<int>(b_obj) * maxUnique;
+    unsigned int count = containment_params.anyhit_num_unique[b_obj];
+
+    for (unsigned int i = 0; i < count; ++i) {
+        const int idx = base + static_cast<int>(i);
+        if (containment_params.anyhit_a_ids[idx] == a_obj) {
+            containment_params.anyhit_a_parity[idx] ^= 1U;
+            optixIgnoreIntersection();
+            return;
+        }
+    }
+
+    if (count < static_cast<unsigned int>(maxUnique)) {
+        const int idx = base + static_cast<int>(count);
+        containment_params.anyhit_a_ids[idx] = a_obj;
+        containment_params.anyhit_a_parity[idx] = 1U;
+        containment_params.anyhit_num_unique[b_obj] = count + 1U;
+    }
+
+    optixIgnoreIntersection();
+}
+
 extern "C" __global__ void __raygen__point_in_mesh() {
     const uint3 idx = optixGetLaunchIndex();
     const uint3 dim = optixGetLaunchDimensions();
@@ -155,54 +228,100 @@ extern "C" __global__ void __raygen__point_in_mesh() {
     float3 origin = containment_params.b_first_vertices[b_obj];
     float3 dir    = make_float3(0.0f, 0.0f, 1.0f);   // +Z ray
 
-    // Local parity tracking per A-object
     int a_ids[MAX_UNIQUE_A_OBJECTS];
-    int a_par[MAX_UNIQUE_A_OBJECTS];   // 0 or 1 (toggled on each hit)
+    int a_par[MAX_UNIQUE_A_OBJECTS];
     int num_unique = 0;
 
-    float tmin = 1e-4f;
-    float tmax = 1e10f;
+    if (containment_params.use_anyhit_point_in_mesh != 0) {
+        const int maxUnique = containment_params.anyhit_max_unique_a_objects;
+        if (maxUnique <= 0 ||
+            containment_params.anyhit_a_ids == nullptr ||
+            containment_params.anyhit_a_parity == nullptr ||
+            containment_params.anyhit_num_unique == nullptr ||
+            containment_params.anyhit_last_obj == nullptr ||
+            containment_params.anyhit_last_t_bits == nullptr) {
+            return;
+        }
 
-    for (int iter = 0; iter < 2000; ++iter) {
-        unsigned int hitFlag      = 0;
-        unsigned int distBits     = 0;
-        unsigned int triangleIndex = 0;
+        const int base = b_obj * maxUnique;
+        containment_params.anyhit_num_unique[b_obj] = 0U;
+        containment_params.anyhit_last_obj[b_obj] = -1;
+        containment_params.anyhit_last_t_bits[b_obj] = 0xFFFFFFFFU;
+        for (int i = 0; i < maxUnique; ++i) {
+            containment_params.anyhit_a_ids[base + i] = -1;
+            containment_params.anyhit_a_parity[base + i] = 0U;
+        }
 
+        unsigned int payload0 = static_cast<unsigned int>(b_obj);
+        unsigned int payload1 = 0U;
+        unsigned int payload2 = 0U;
         optixTrace(
             containment_params.target_handle,
             origin,
             dir,
-            tmin,
-            tmax,
+            1e-4f,
+            1e10f,
             0.0f,
             OptixVisibilityMask(255),
             OPTIX_RAY_FLAG_NONE,
             0, 1, 0,
-            hitFlag, distBits, triangleIndex);
+            payload0, payload1, payload2);
 
-        if (!hitFlag) break;
-
-        float t = __uint_as_float(distBits);
-        if (t >= tmax) break;
-
-        int a_obj = containment_params.target_triangle_to_object[triangleIndex];
-
-        // Update parity for this A object
-        bool found = false;
+        num_unique = static_cast<int>(containment_params.anyhit_num_unique[b_obj]);
+        if (num_unique > maxUnique) {
+            num_unique = maxUnique;
+        }
+        if (num_unique > MAX_UNIQUE_A_OBJECTS) {
+            num_unique = MAX_UNIQUE_A_OBJECTS;
+        }
         for (int i = 0; i < num_unique; ++i) {
-            if (a_ids[i] == a_obj) {
-                a_par[i] ^= 1;
-                found = true;
-                break;
-            }
+            a_ids[i] = containment_params.anyhit_a_ids[base + i];
+            a_par[i] = static_cast<int>(containment_params.anyhit_a_parity[base + i] & 1U);
         }
-        if (!found && num_unique < MAX_UNIQUE_A_OBJECTS) {
-            a_ids[num_unique] = a_obj;
-            a_par[num_unique] = 1;   // first hit → parity 1 (inside)
-            num_unique++;
-        }
+    } else {
+        float tmin = 1e-4f;
+        float tmax = 1e10f;
 
-        tmin = t + 1e-4f;
+        for (int iter = 0; iter < 2000; ++iter) {
+            unsigned int hitFlag      = 0;
+            unsigned int distBits     = 0;
+            unsigned int triangleIndex = 0;
+
+            optixTrace(
+                containment_params.target_handle,
+                origin,
+                dir,
+                tmin,
+                tmax,
+                0.0f,
+                OptixVisibilityMask(255),
+                OPTIX_RAY_FLAG_NONE,
+                0, 1, 0,
+                hitFlag, distBits, triangleIndex);
+
+            if (!hitFlag) break;
+
+            float t = __uint_as_float(distBits);
+            if (t >= tmax) break;
+
+            int a_obj = containment_params.target_triangle_to_object[triangleIndex];
+
+            bool found = false;
+            for (int i = 0; i < num_unique; ++i) {
+                if (a_ids[i] == a_obj) {
+                    a_par[i] ^= 1;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && num_unique < MAX_UNIQUE_A_OBJECTS) {
+                a_ids[num_unique] = a_obj;
+                a_par[num_unique] = 1;
+                num_unique++;
+            }
+
+            tmin = t + 1e-4f;
+        }
     }
 
     // Emit containment pairs
