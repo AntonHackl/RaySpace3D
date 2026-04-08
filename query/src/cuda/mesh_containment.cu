@@ -96,41 +96,78 @@ extern "C" __global__ void __raygen__check_edges() {
 
     float3 normDir = cont_normalize3f(dir);
 
-    unsigned int hitFlag = 0;
-    unsigned int distBits = __float_as_uint(edgeLen + epsilon);
-    unsigned int triangleIndex = 0;
+    // Traverse all intersections along the edge segment, not only the first hit.
+    // Otherwise overlap pairs can be missed and later misclassified as containment.
+    float current_t_min = epsilon;
+    float lastT = -1.0f;
+    unsigned int lastTriangle = 0xFFFFFFFFu;
+    const int kMaxEdgeTraceIterations = 256;
 
-    optixTrace(
-        containment_params.target_handle,
-        edgeStart,
-        normDir,
-        epsilon,
-        edgeLen + epsilon,
-        0.0f,
-        OptixVisibilityMask(255),
-        OPTIX_RAY_FLAG_NONE,
-        0, 1, 0,
-        hitFlag, distBits, triangleIndex);
+    for (int iter = 0; iter < kMaxEdgeTraceIterations; ++iter) {
+        if (current_t_min > edgeLen + epsilon) {
+            break;
+        }
 
-    float t = __uint_as_float(distBits);
-    if (hitFlag && t >= epsilon && t <= edgeLen + epsilon) {
-        int hit_obj = containment_params.target_triangle_to_object[triangleIndex];
+        unsigned int hitFlag = 0;
+        unsigned int distBits = __float_as_uint(edgeLen + epsilon);
+        unsigned int triangleIndex = 0;
 
-        for (int i = 0; i < numSourceObjects; ++i) {
-            const int src_obj = sourceObjectIds[i];
-            // Always store as (A_obj, B_obj) regardless of direction
-            if (containment_params.swap_ids == 0) {
-                // B→A: src=B, hit=A  → (A=hit, B=src)
-                cont_insert_table(containment_params.intersection_hash_table,
-                                  containment_params.intersection_hash_table_size,
-                                  hit_obj, src_obj);
-            } else {
-                // A→B: src=A, hit=B  → (A=src, B=hit)
-                cont_insert_table(containment_params.intersection_hash_table,
-                                  containment_params.intersection_hash_table_size,
-                                  src_obj, hit_obj);
+        optixTrace(
+            containment_params.target_handle,
+            edgeStart,
+            normDir,
+            current_t_min,
+            edgeLen + epsilon,
+            0.0f,
+            OptixVisibilityMask(255),
+            OPTIX_RAY_FLAG_NONE,
+            0, 1, 0,
+            hitFlag, distBits, triangleIndex);
+
+        if (!hitFlag) {
+            break;
+        }
+
+        const float t = __uint_as_float(distBits);
+        if (t < current_t_min || t > edgeLen + epsilon) {
+            break;
+        }
+
+        const bool sameHit = (triangleIndex == lastTriangle) && (lastT >= 0.0f) && (fabsf(t - lastT) <= 1e-5f);
+        if (!sameHit) {
+            const int hit_obj = containment_params.target_triangle_to_object[triangleIndex];
+
+            for (int i = 0; i < numSourceObjects; ++i) {
+                const int src_obj = sourceObjectIds[i];
+                // Always store as (A_obj, B_obj) regardless of direction.
+                if (containment_params.swap_ids == 0) {
+                    // B->A: src=B, hit=A -> (A=hit, B=src)
+                    cont_insert_table(containment_params.intersection_hash_table,
+                                      containment_params.intersection_hash_table_size,
+                                      hit_obj, src_obj);
+                } else {
+                    // A->B: src=A, hit=B -> (A=src, B=hit)
+                    cont_insert_table(containment_params.intersection_hash_table,
+                                      containment_params.intersection_hash_table_size,
+                                      src_obj, hit_obj);
+                }
             }
         }
+
+        lastT = t;
+        lastTriangle = triangleIndex;
+
+        float next_t_min = nextafterf(t, edgeLen + epsilon);
+        if (next_t_min <= t) {
+            next_t_min = t + epsilon;
+        }
+        if (next_t_min <= current_t_min) {
+            next_t_min = nextafterf(current_t_min, edgeLen + epsilon);
+        }
+        if (next_t_min <= current_t_min) {
+            break;
+        }
+        current_t_min = next_t_min;
     }
 }
 

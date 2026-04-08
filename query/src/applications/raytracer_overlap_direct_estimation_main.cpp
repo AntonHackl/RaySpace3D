@@ -228,6 +228,7 @@ public:
     QueryDirection queryDirection = QueryDirection::Both;
     std::string pairsOutputPath;
     bool trackHashContention = false;
+    bool useAlphaCorrection = true;
     unsigned long long manualHashTableSize = 0;
     float hashTableFreeMemFraction = 0.0f;
 
@@ -242,6 +243,7 @@ public:
         options.emplace_back("--query-direction <d>", "Query direction: both|mesh1_to_mesh2|mesh2_to_mesh1 (default: both)");
         options.emplace_back("--pairs-output <path>", "Optional CSV export path for unique result pairs");
         options.emplace_back("--track-hash-contention", "Track hash accesses and contention rate");
+        options.emplace_back("--no-alpha-correction", "Disable replication-factor alpha correction for estimated pairs");
         options.emplace_back("--hash-table-size <ull>", "Override hash table size (slots); 0 = auto-compute");
         options.emplace_back("--hash-table-free-mem-fraction <f>", "Use f in (0,1] of free GPU memory for hash table sizing");
         options.emplace_back("--estimate-only", "Only run selectivity estimation, skip actual query");
@@ -280,6 +282,10 @@ protected:
         }
         if (arg == "--track-hash-contention") {
             trackHashContention = true;
+            return true;
+        }
+        if (arg == "--no-alpha-correction") {
+            useAlphaCorrection = false;
             return true;
         }
         if (arg == "--hash-table-size" && i + 1 < argc) {
@@ -326,6 +332,7 @@ int main(int argc, char* argv[]) {
     const QueryDirection queryDirection = options.queryDirection;
     const std::string& pairsOutputPath = options.pairsOutputPath;
     const bool trackHashContention = options.trackHashContention;
+    const bool useAlphaCorrection = options.useAlphaCorrection;
     const unsigned long long manualHashTableSize = options.manualHashTableSize;
     const float hashTableFreeMemFraction = options.hashTableFreeMemFraction;
 
@@ -396,8 +403,11 @@ int main(int argc, char* argv[]) {
 
                 if (cellVolume < 1e-9f) cellVolume = 1e-9f;
 
-                float alpha = minkowskiVol / cellVolume;
-                if (alpha < 1.0f) alpha = 1.0f;
+                float alpha = 1.0f;
+                if (useAlphaCorrection) {
+                    alpha = minkowskiVol / cellVolume;
+                    if (alpha < 1.0f) alpha = 1.0f;
+                }
 
                 estimatedPairs = (long long)(estimatedPairsFloat / alpha);
 
@@ -410,6 +420,7 @@ int main(int argc, char* argv[]) {
                     std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
                     std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
                     std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
+                    std::cout << "Alpha Correction Enabled:  " << (useAlphaCorrection ? "yes" : "no") << std::endl;
                     std::cout << "Replication Factor (alpha):" << alpha << std::endl;
                     std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
                     std::cout << "==============================\n" << std::endl;

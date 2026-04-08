@@ -224,7 +224,7 @@ public:
     float hashLoadFactor = 0.5f;
     int overlapMaxIterations = 100;
     int containmentMaxIterations = 1024;
-    bool useAnyhitContainment = false;
+    bool useAnyhitContainment = true;
 
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
@@ -235,7 +235,7 @@ public:
         options.emplace_back("--query-direction <both|mesh1_to_mesh2|mesh2_to_mesh1>", "Control query direction (default: both)");
         options.emplace_back("--overlap-max-iterations <int>", "Overlap ray iteration cap (default: 100)");
         options.emplace_back("--containment-max-iterations <int>", "Containment ray iteration cap (default: 1024)");
-        options.emplace_back("--use-anyhit-containment", "Use AnyHit accumulation for containment rays");
+        options.emplace_back("--use-anyhit-containment", "Use AnyHit accumulation for containment rays (default: enabled)");
         options.emplace_back("--hash-load-factor <float>", "Hash load factor in (0,1] (default: 0.5)");
         options.emplace_back("--enable-profiling-stats", "Enable device-side profiling counters");
         options.emplace_back("--pairs-output <path>", "Intersection pairs CSV path (default: intersection_pairs.csv)");

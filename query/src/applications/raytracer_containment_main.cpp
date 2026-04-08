@@ -52,7 +52,8 @@ public:
         allowNoExportFlag = true;
     }
 
-    bool useAnyhitPointInMesh = false;
+    bool useAnyhitPointInMesh = true;
+    bool includeOverlapPairs = false;
 
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
@@ -62,7 +63,8 @@ public:
             "Dataset B (objects tested for containment)"
         );
         appendBenchmarkRunHelp(options);
-        options.emplace_back("--use-anyhit-point-in-mesh", "Use AnyHit shader accumulation for point-in-mesh parity");
+        options.emplace_back("--use-anyhit-point-in-mesh", "Use AnyHit shader accumulation for point-in-mesh parity (default: enabled)");
+        options.emplace_back("--include-overlap-pairs", "Include overlap/touch pairs in output (union of overlap + strict containment)");
         appendNoExportHelp(options);
         appendHelpFlag(options);
 
@@ -81,6 +83,10 @@ protected:
         (void)argv;
         if (arg == "--use-anyhit-point-in-mesh") {
             useAnyhitPointInMesh = true;
+            return true;
+        }
+        if (arg == "--include-overlap-pairs") {
+            includeOverlapPairs = true;
             return true;
         }
         return false;
@@ -110,10 +116,12 @@ int main(int argc, char* argv[]) {
     const int warmupRuns = options.warmupRuns;
     const bool exportResults = options.exportResults;
     const bool useAnyhitPointInMesh = options.useAnyhitPointInMesh;
+    const bool includeOverlapPairs = options.includeOverlapPairs;
 
     std::cout << "=== Mesh Containment Query ===" << std::endl;
     std::cout << "(checks which B-objects are fully contained inside A-objects)" << std::endl;
     std::cout << "Point-in-mesh mode: " << (useAnyhitPointInMesh ? "anyhit" : "closesthit") << std::endl;
+    std::cout << "Include overlap pairs: " << (includeOverlapPairs ? "yes" : "no") << std::endl;
 
     if (!options.hasRequiredMeshInputs()) {
         if (meshAPath.empty()) { std::cerr << "Error: --mesh1 (dataset A) required\n"; }
@@ -230,6 +238,12 @@ int main(int argc, char* argv[]) {
     // ------------------------------------------------------------------
     timer.next("Warmup");
 
+    struct ContainmentRunResult {
+        std::vector<MeshQueryResult> reportedPairs;
+        int containmentPairCount = 0;
+        int overlapPairCount = 0;
+    };
+
     auto runOnce = [&](bool verbose) {
         CUDA_CHECK(cudaMemset(d_intersectionHT, 0xFF,
                               (size_t)intersectionHTSize * sizeof(unsigned long long)));
@@ -287,27 +301,59 @@ int main(int argc, char* argv[]) {
         launcher.launchPointInMesh(params, numBObjects);
 
         // Compact results
-        int maxOutput = 2000000;
-        MeshQueryResult* d_results = nullptr;
-        CUDA_CHECK(cudaMalloc(&d_results, maxOutput * sizeof(MeshQueryResult)));
+        int maxContainmentOutput = 2000000;
+        MeshQueryResult* d_containment_results = nullptr;
+        CUDA_CHECK(cudaMalloc(&d_containment_results, maxContainmentOutput * sizeof(MeshQueryResult)));
 
         int numContained = compact_hash_table_pairs(
-            d_containmentHT, containmentHTSize, d_results, maxOutput);
+            d_containmentHT, containmentHTSize, d_containment_results, maxContainmentOutput);
 
         if (verbose) {
             std::cout << "Containment pairs found: " << numContained << std::endl;
         }
 
-        // Copy to host
-        std::vector<MeshQueryResult> results(numContained);
+        ContainmentRunResult runResult;
+        runResult.containmentPairCount = numContained;
+
+        // Copy strict containment results to host first.
+        std::vector<MeshQueryResult> containmentResults(numContained);
         if (numContained > 0) {
-            CUDA_CHECK(cudaMemcpy(results.data(), d_results,
+            CUDA_CHECK(cudaMemcpy(containmentResults.data(), d_containment_results,
                                   numContained * sizeof(MeshQueryResult),
                                   cudaMemcpyDeviceToHost));
         }
-        CUDA_CHECK(cudaFree(d_results));
+        CUDA_CHECK(cudaFree(d_containment_results));
 
-        return results;
+        runResult.reportedPairs = std::move(containmentResults);
+
+        if (includeOverlapPairs) {
+            int maxOverlapOutput = 2000000;
+            MeshQueryResult* d_overlap_results = nullptr;
+            CUDA_CHECK(cudaMalloc(&d_overlap_results, maxOverlapOutput * sizeof(MeshQueryResult)));
+
+            int numOverlap = compact_hash_table_pairs(
+                d_intersectionHT, intersectionHTSize, d_overlap_results, maxOverlapOutput);
+            runResult.overlapPairCount = numOverlap;
+
+            if (verbose) {
+                std::cout << "Overlap/touch pairs found: " << numOverlap << std::endl;
+            }
+
+            if (numOverlap > 0) {
+                std::vector<MeshQueryResult> overlapResults(numOverlap);
+                CUDA_CHECK(cudaMemcpy(overlapResults.data(), d_overlap_results,
+                                      numOverlap * sizeof(MeshQueryResult),
+                                      cudaMemcpyDeviceToHost));
+                runResult.reportedPairs.insert(
+                    runResult.reportedPairs.end(),
+                    overlapResults.begin(),
+                    overlapResults.end());
+            }
+
+            CUDA_CHECK(cudaFree(d_overlap_results));
+        }
+
+        return runResult;
     };
 
     if (warmupRuns > 0) {
@@ -323,10 +369,15 @@ int main(int argc, char* argv[]) {
     std::cout << "\n=== Executing containment query ===" << std::endl;
 
     std::vector<MeshQueryResult> finalResults;
+    int finalContainmentCount = 0;
+    int finalOverlapCount = 0;
     for (int run = 0; run < numberOfRuns; ++run) {
-        finalResults = runOnce(run == numberOfRuns - 1);
+        ContainmentRunResult runResult = runOnce(run == numberOfRuns - 1);
+        finalContainmentCount = runResult.containmentPairCount;
+        finalOverlapCount = runResult.overlapPairCount;
+        finalResults = std::move(runResult.reportedPairs);
     }
-    int numContained = static_cast<int>(finalResults.size());
+    int numReported = static_cast<int>(finalResults.size());
 
     timer.next("Download Results");
 
@@ -338,15 +389,29 @@ int main(int argc, char* argv[]) {
     std::cout << "\n=== Containment Query Summary ===" << std::endl;
     std::cout << "A triangles: " << aNumTriangles << "  objects: " << numAObjects << std::endl;
     std::cout << "B triangles: " << bNumTriangles << "  objects: " << numBObjects << std::endl;
-    std::cout << "Containment pairs (B in A): " << numContained << std::endl;
+    std::cout << "Containment pairs (B in A): " << finalContainmentCount << std::endl;
+    if (includeOverlapPairs) {
+        std::cout << "Overlap/Touch pairs (A vs B): " << finalOverlapCount << std::endl;
+        std::cout << "Reported pairs: " << numReported << std::endl;
+    }
 
     if (exportResults) {
         std::string csvFile = "mesh_containment_results.csv";
         std::cout << "Exporting results to " << csvFile << std::endl;
         std::ofstream csv(csvFile);
-        csv << "a_object_id,b_object_id\n";
-        for (const auto& r : finalResults) {
-            csv << r.object_id_mesh1 << "," << r.object_id_mesh2 << "\n";
+        if (includeOverlapPairs) {
+            csv << "a_object_id,b_object_id,pair_type\n";
+            const size_t containmentCount = static_cast<size_t>(std::max(0, finalContainmentCount));
+            for (size_t i = 0; i < finalResults.size(); ++i) {
+                const auto& r = finalResults[i];
+                const char* pairType = (i < containmentCount) ? "containment" : "overlap";
+                csv << r.object_id_mesh1 << "," << r.object_id_mesh2 << "," << pairType << "\n";
+            }
+        } else {
+            csv << "a_object_id,b_object_id\n";
+            for (const auto& r : finalResults) {
+                csv << r.object_id_mesh1 << "," << r.object_id_mesh2 << "\n";
+            }
         }
     }
 
