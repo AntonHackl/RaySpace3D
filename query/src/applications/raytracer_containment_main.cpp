@@ -10,6 +10,7 @@
 #include <sstream>
 #include <set>
 #include <algorithm>
+#include <chrono>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -210,19 +211,38 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_bFirstVertices, bFirstVertices.data(),
                           numBObjects * sizeof(float3), cudaMemcpyHostToDevice));
 
+    std::vector<float3> aFirstVertices(numAObjects);
+    {
+        std::vector<bool> seen(numAObjects, false);
+        for (int tri = 0; tri < aNumTriangles; ++tri) {
+            int obj = meshAData.triangleToObject[tri];
+            if (!seen[obj]) {
+                uint3 idx = meshAData.indices[tri];
+                aFirstVertices[obj] = meshAData.vertices[idx.x];
+                seen[obj] = true;
+            }
+        }
+    }
+
+    float3* d_aFirstVertices = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_aFirstVertices, numAObjects * sizeof(float3)));
+    CUDA_CHECK(cudaMemcpy(d_aFirstVertices, aFirstVertices.data(),
+                          numAObjects * sizeof(float3), cudaMemcpyHostToDevice));
+
     constexpr int kAnyhitMaxUniqueAObjects = 512;
+    const int maxTrackedObjects = std::max(numAObjects, numBObjects);
     int* d_anyhit_a_ids = nullptr;
     unsigned int* d_anyhit_a_parity = nullptr;
     unsigned int* d_anyhit_num_unique = nullptr;
     int* d_anyhit_last_obj = nullptr;
     unsigned int* d_anyhit_last_t_bits = nullptr;
     if (useAnyhitPointInMesh) {
-        const size_t slots = static_cast<size_t>(numBObjects) * static_cast<size_t>(kAnyhitMaxUniqueAObjects);
+        const size_t slots = static_cast<size_t>(maxTrackedObjects) * static_cast<size_t>(kAnyhitMaxUniqueAObjects);
         CUDA_CHECK(cudaMalloc(&d_anyhit_a_ids, slots * sizeof(int)));
         CUDA_CHECK(cudaMalloc(&d_anyhit_a_parity, slots * sizeof(unsigned int)));
-        CUDA_CHECK(cudaMalloc(&d_anyhit_num_unique, numBObjects * sizeof(unsigned int)));
-        CUDA_CHECK(cudaMalloc(&d_anyhit_last_obj, numBObjects * sizeof(int)));
-        CUDA_CHECK(cudaMalloc(&d_anyhit_last_t_bits, numBObjects * sizeof(unsigned int)));
+        CUDA_CHECK(cudaMalloc(&d_anyhit_num_unique, maxTrackedObjects * sizeof(unsigned int)));
+        CUDA_CHECK(cudaMalloc(&d_anyhit_last_obj, maxTrackedObjects * sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_anyhit_last_t_bits, maxTrackedObjects * sizeof(unsigned int)));
     }
 
     int intersectionHTSize  = 16777216;  // 16 M slots ≈ 128 MB
@@ -230,8 +250,10 @@ int main(int argc, char* argv[]) {
 
     unsigned long long* d_intersectionHT = nullptr;
     unsigned long long* d_containmentHT  = nullptr;
+    unsigned long long* d_containmentHT_reverse = nullptr;
     CUDA_CHECK(cudaMalloc(&d_intersectionHT, (size_t)intersectionHTSize * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_containmentHT,  (size_t)containmentHTSize  * sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_containmentHT_reverse, (size_t)containmentHTSize * sizeof(unsigned long long)));
 
     // ------------------------------------------------------------------
     // Warmup
@@ -244,11 +266,17 @@ int main(int argc, char* argv[]) {
         int overlapPairCount = 0;
     };
 
-    auto runOnce = [&](bool verbose) {
+    auto runOnce = [&](bool verbose, bool recordBreakdownPhases) {
+        if (recordBreakdownPhases) {
+            timer.addMeasurement("Selectivity Estimation", 0);
+        }
+
         CUDA_CHECK(cudaMemset(d_intersectionHT, 0xFF,
                               (size_t)intersectionHTSize * sizeof(unsigned long long)));
         CUDA_CHECK(cudaMemset(d_containmentHT,  0xFF,
                               (size_t)containmentHTSize  * sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMemset(d_containmentHT_reverse, 0xFF,
+                              (size_t)containmentHTSize * sizeof(unsigned long long)));
 
         MeshContainmentLaunchParams params{};
 
@@ -277,7 +305,14 @@ int main(int argc, char* argv[]) {
         params.anyhit_last_obj = d_anyhit_last_obj;
         params.anyhit_last_t_bits = d_anyhit_last_t_bits;
 
+        auto t0 = std::chrono::high_resolution_clock::now();
         launcher.launchEdgeCheck(params, bNumEdges);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        if (recordBreakdownPhases) {
+            timer.addMeasurement(
+                "Raytrace_Overlap_Hash_Mesh2ToMesh1",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+        }
 
         // Phase 1b: A edges → B
         params.src_edge_starts             = aEdgeData.d_edge_starts;
@@ -291,14 +326,45 @@ int main(int argc, char* argv[]) {
         params.swap_ids                = 1;
         params.trace_phase = 0;
 
+        t0 = std::chrono::high_resolution_clock::now();
         launcher.launchEdgeCheck(params, aNumEdges);
+        t1 = std::chrono::high_resolution_clock::now();
+        if (recordBreakdownPhases) {
+            timer.addMeasurement(
+                "Raytrace_Overlap_Hash_Mesh1ToMesh2",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+        }
 
         // Phase 2: Point-in-mesh
         params.target_handle             = aAS.getHandle();
         params.target_triangle_to_object = aUploader.getTriangleToObject();
         params.trace_phase = 1;
 
+        t0 = std::chrono::high_resolution_clock::now();
         launcher.launchPointInMesh(params, numBObjects);
+        t1 = std::chrono::high_resolution_clock::now();
+        if (recordBreakdownPhases) {
+            timer.addMeasurement(
+                "Raytrace_Containment_Hash_Mesh2ToMesh1",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+        }
+
+        MeshContainmentLaunchParams reverseParams = params;
+        reverseParams.target_handle = bAS.getHandle();
+        reverseParams.target_triangle_to_object = bUploader.getTriangleToObject();
+        reverseParams.b_first_vertices = d_aFirstVertices;
+        reverseParams.b_num_objects = numAObjects;
+        reverseParams.containment_hash_table = d_containmentHT_reverse;
+        reverseParams.containment_hash_table_size = containmentHTSize;
+
+        t0 = std::chrono::high_resolution_clock::now();
+        launcher.launchPointInMesh(reverseParams, numAObjects);
+        t1 = std::chrono::high_resolution_clock::now();
+        if (recordBreakdownPhases) {
+            timer.addMeasurement(
+                "Raytrace_Containment_Hash_Mesh1ToMesh2",
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+        }
 
         // Compact results
         int maxContainmentOutput = 2000000;
@@ -358,7 +424,7 @@ int main(int argc, char* argv[]) {
 
     if (warmupRuns > 0) {
         std::cout << "Running " << warmupRuns << " warmup iterations..." << std::endl;
-        for (int w = 0; w < warmupRuns; ++w) runOnce(false);
+        for (int w = 0; w < warmupRuns; ++w) runOnce(false, false);
     }
 
     // ---------------------------------------------------------------
@@ -372,7 +438,7 @@ int main(int argc, char* argv[]) {
     int finalContainmentCount = 0;
     int finalOverlapCount = 0;
     for (int run = 0; run < numberOfRuns; ++run) {
-        ContainmentRunResult runResult = runOnce(run == numberOfRuns - 1);
+        ContainmentRunResult runResult = runOnce(run == numberOfRuns - 1, true);
         finalContainmentCount = runResult.containmentPairCount;
         finalOverlapCount = runResult.overlapPairCount;
         finalResults = std::move(runResult.reportedPairs);
@@ -422,6 +488,8 @@ int main(int argc, char* argv[]) {
 
     CUDA_CHECK(cudaFree(d_intersectionHT));
     CUDA_CHECK(cudaFree(d_containmentHT));
+    CUDA_CHECK(cudaFree(d_containmentHT_reverse));
+    CUDA_CHECK(cudaFree(d_aFirstVertices));
     CUDA_CHECK(cudaFree(d_bFirstVertices));
     if (d_anyhit_num_unique) CUDA_CHECK(cudaFree(d_anyhit_num_unique));
     if (d_anyhit_a_parity) CUDA_CHECK(cudaFree(d_anyhit_a_parity));
