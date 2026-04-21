@@ -173,6 +173,7 @@ public:
     bool estimateOnly = false;
     float gamma = 0.8f;
     float epsilon = 0.001f;
+    int overlapMaxIterations = 100;
 
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
@@ -180,6 +181,7 @@ public:
         appendBenchmarkRunHelp(options);
         options.emplace_back("--gamma <float>", "Gamma parameter for estimation (default: 0.8)");
         options.emplace_back("--epsilon <float>", "Epsilon parameter for estimation (default: 0.001)");
+        options.emplace_back("--overlap-max-iterations <int>", "Overlap ray iteration cap (default: 100)");
         options.emplace_back("--estimate-only", "Only run selectivity estimation, skip actual query");
         appendHelpFlag(options);
 
@@ -203,6 +205,10 @@ protected:
         }
         if (arg == "--estimate-only") {
             estimateOnly = true;
+            return true;
+        }
+        if (arg == "--overlap-max-iterations" && i + 1 < argc) {
+            overlapMaxIterations = std::stoi(argv[++i]);
             return true;
         }
         return false;
@@ -231,6 +237,7 @@ int main(int argc, char* argv[]) {
     const bool estimateOnly = options.estimateOnly;
     const float gamma = options.gamma;
     const float epsilon = options.epsilon;
+    const int overlapMaxIterations = options.overlapMaxIterations;
 
     if (!options.hasRequiredMeshInputs()) {
         std::cerr << "Usage: " << argv[0] << " --mesh1 <path> --mesh2 <path> [options]" << std::endl;
@@ -412,6 +419,7 @@ int main(int argc, char* argv[]) {
     edgesParams1.mesh2_indices = (uint3*)mesh2Uploader.getIndices();
     edgesParams1.mesh2_triangle_to_object = mesh2Uploader.getTriangleToObject();
     edgesParams1.swap_pair_order = 0;
+    edgesParams1.overlap_max_iterations = overlapMaxIterations;
 
     MeshOverlapEdgesLaunchParams edgesParams2 = {};
     edgesParams2.edge_starts = mesh2EdgeData.d_edge_starts;
@@ -425,6 +433,7 @@ int main(int argc, char* argv[]) {
     edgesParams2.mesh2_indices = (uint3*)mesh1Uploader.getIndices();
     edgesParams2.mesh2_triangle_to_object = mesh1Uploader.getTriangleToObject();
     edgesParams2.swap_pair_order = 1;
+    edgesParams2.overlap_max_iterations = overlapMaxIterations;
 
     timer.next("Warmup");
     if (warmupRuns > 0) {

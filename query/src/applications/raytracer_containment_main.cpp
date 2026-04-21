@@ -90,6 +90,8 @@ public:
 
     bool useAnyhitPointInMesh = true;
     bool includeOverlapPairs = false;
+    int overlapMaxIterations = 256;
+    int containmentMaxIterations = 2000;
     float gamma = 0.8f;
     float epsilon = 0.001f;
     float hashLoadFactor = 0.5f;
@@ -104,6 +106,8 @@ public:
         appendBenchmarkRunHelp(options);
         options.emplace_back("--use-anyhit-point-in-mesh", "Use AnyHit shader accumulation for point-in-mesh parity (default: enabled)");
         options.emplace_back("--include-overlap-pairs", "Include overlap/touch pairs in output (union of overlap + strict containment)");
+        options.emplace_back("--overlap-max-iterations <int>", "Max iterations for edge-scan overlap check (default: 256)");
+        options.emplace_back("--containment-max-iterations <int>", "Max iterations for point-in-mesh ray traversal (default: 2000)");
         options.emplace_back("--gamma <float>", "Estimation gamma (default: 0.8)");
         options.emplace_back("--epsilon <float>", "Estimation epsilon (default: 0.001)");
         options.emplace_back("--hash-load-factor <float>", "Hash load factor for table sizing (default: 0.5)");
@@ -129,6 +133,14 @@ protected:
         }
         if (arg == "--include-overlap-pairs") {
             includeOverlapPairs = true;
+            return true;
+        }
+        if (arg == "--overlap-max-iterations" && i + 1 < argc) {
+            overlapMaxIterations = std::stoi(argv[++i]);
+            return true;
+        }
+        if (arg == "--containment-max-iterations" && i + 1 < argc) {
+            containmentMaxIterations = std::stoi(argv[++i]);
             return true;
         }
         if (arg == "--gamma" && i + 1 < argc) {
@@ -444,6 +456,8 @@ int main(int argc, char* argv[]) {
         params.anyhit_num_unique = d_anyhit_num_unique;
         params.anyhit_last_obj = d_anyhit_last_obj;
         params.anyhit_last_t_bits = d_anyhit_last_t_bits;
+        params.overlap_max_iterations = options.overlapMaxIterations;
+        params.containment_max_iterations = options.containmentMaxIterations;
 
         auto t0 = std::chrono::high_resolution_clock::now();
         launcher.launchEdgeCheck(params, bNumEdges);

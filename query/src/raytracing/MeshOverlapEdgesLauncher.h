@@ -38,6 +38,7 @@ struct MeshOverlapEdgesLaunchParams {
     MeshQueryResult* results;         // Actual collision pairs
     int pass;                         // 1 = count only, 2 = write results
     int swap_pair_order;              // 0: (source,target), 1: (target,source) -> canonical (mesh1,mesh2)
+    int overlap_max_iterations;
 };
 
 class MeshOverlapEdgesLauncher {

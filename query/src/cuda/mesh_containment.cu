@@ -101,7 +101,7 @@ extern "C" __global__ void __raygen__check_edges() {
     float current_t_min = epsilon;
     float lastT = -1.0f;
     unsigned int lastTriangle = 0xFFFFFFFFu;
-    const int kMaxEdgeTraceIterations = 256;
+    const int kMaxEdgeTraceIterations = containment_params.overlap_max_iterations;
 
     for (int iter = 0; iter < kMaxEdgeTraceIterations; ++iter) {
         if (current_t_min > edgeLen + epsilon) {
@@ -318,8 +318,9 @@ extern "C" __global__ void __raygen__point_in_mesh() {
     } else {
         float tmin = 1e-4f;
         float tmax = 1e10f;
+        const int kMaxPointIterations = containment_params.containment_max_iterations;
 
-        for (int iter = 0; iter < 2000; ++iter) {
+        for (int iter = 0; iter < kMaxPointIterations; ++iter) {
             unsigned int hitFlag      = 0;
             unsigned int distBits     = 0;
             unsigned int triangleIndex = 0;

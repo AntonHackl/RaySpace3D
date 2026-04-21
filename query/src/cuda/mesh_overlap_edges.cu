@@ -40,6 +40,7 @@ struct MeshOverlapEdgesLaunchParams {
     MeshQueryResult* results;         // Actual collision pairs
     int pass;                         // 1 = count only, 2 = write results
     int swap_pair_order;              // 0: (source,target), 1: (target,source)
+    int overlap_max_iterations;
 };
 
 extern "C" __constant__ MeshOverlapEdgesLaunchParams mesh_overlap_edges_params;
@@ -111,7 +112,8 @@ static __forceinline__ __device__ int trace_edge_multi_hits_edges(
     long long& writeCursor,
     float epsilon
 ) {
-    const int kMaxIterations = 100;
+    int kMaxIterations = mesh_overlap_edges_params.overlap_max_iterations;
+    if (kMaxIterations <= 0) kMaxIterations = 100;
     
     float3 edgeDir = make_float3(edgeEnd.x - edgeStart.x,
                                  edgeEnd.y - edgeStart.y,
