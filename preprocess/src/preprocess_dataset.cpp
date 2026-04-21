@@ -34,35 +34,20 @@ struct ObjectStats {
     double volume = 0.0;
 };
 
-void generateGridStats(GeometryData& geometry, GridData& grid, int resolution, float worldSize = -1.0f) {
-    grid.resolution = { (unsigned int)resolution, (unsigned int)resolution, (unsigned int)resolution };
-    
-    // Compute bounds from geometry if not specified or as a safety
-    float3 minB = {1e30f, 1e30f, 1e30f};
-    float3 maxB = {-1e30f, -1e30f, -1e30f};
-    for (const auto& v : geometry.vertices) {
-        minB.x = std::min(minB.x, v.x);
-        minB.y = std::min(minB.y, v.y);
-        minB.z = std::min(minB.z, v.z);
-        maxB.x = std::max(maxB.x, v.x);
-        maxB.y = std::max(maxB.y, v.y);
-        maxB.z = std::max(maxB.z, v.z);
+struct Int3Hash {
+    std::size_t operator()(const int3& k) const {
+        return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1) ^ (std::hash<int>()(k.z) << 2);
     }
-    
-    // If worldSize is positive, we use [0, worldSize] as requested legacy behavior
-    // but better to use actual bounds
-    if (worldSize <= 0) {
-        grid.minBound = minB;
-        grid.maxBound = maxB;
-    } else {
-        grid.minBound = {0.0f, 0.0f, 0.0f};
-        grid.maxBound = {worldSize, worldSize, worldSize};
+};
+
+struct Int3Equal {
+    bool operator()(const int3& a, const int3& b) const {
+        return a.x == b.x && a.y == b.y && a.z == b.z;
     }
-    
-    float3 range = {grid.maxBound.x - grid.minBound.x, grid.maxBound.y - grid.minBound.y, grid.maxBound.z - grid.minBound.z};
-    float3 cellSize = {range.x / resolution, range.y / resolution, range.z / resolution};
-    
-    grid.cells.assign(resolution * resolution * resolution, {0, 0, 0.0f, 0.0f});
+};
+
+void generateGridStats(GeometryData& geometry, GridData& grid, float cellSize) {
+    grid.cellSize = cellSize;
     grid.hasGrid = true;
     
     std::unordered_map<int, ObjectStats> objects;
@@ -115,6 +100,8 @@ void generateGridStats(GeometryData& geometry, GridData& grid, int resolution, f
         stats.volume += (cx * t2.x + cy * t2.y + cz * t2.z);
     }
     
+    std::unordered_map<int3, GridCell, Int3Hash, Int3Equal> cellMap;
+
     for (auto& kv : objects) {
         ObjectStats& stats = kv.second;
         float meshVol = std::abs((float)stats.volume) / 6.0f;
@@ -137,45 +124,46 @@ void generateGridStats(GeometryData& geometry, GridData& grid, int resolution, f
         float avgSize = (width + height + depth) / 3.0f;
         
         // Anchor Cell
-        int cx = (int)((center.x - grid.minBound.x) / cellSize.x);
-        int cy = (int)((center.y - grid.minBound.y) / cellSize.y);
-        int cz = (int)((center.z - grid.minBound.z) / cellSize.z);
+        int cx = (int)std::floor(center.x / cellSize);
+        int cy = (int)std::floor(center.y / cellSize);
+        int cz = (int)std::floor(center.z / cellSize);
         
-        // Boundary check
-        if (cx >= 0 && cx < resolution && cy >= 0 && cy < resolution && cz >= 0 && cz < resolution) {
-            int idx = (cz * resolution + cy) * resolution + cx;
-            grid.cells[idx].CenterCount++;
-        }
+        int3 centerKey = {cx, cy, cz};
+        cellMap[centerKey].CenterCount++;
         
         // Touch Cells (Conservative Rasterization/Overlap)
-        int minCx = std::max(0, (int)((stats.minB.x - grid.minBound.x) / cellSize.x));
-        int minCy = std::max(0, (int)((stats.minB.y - grid.minBound.y) / cellSize.y));
-        int minCz = std::max(0, (int)((stats.minB.z - grid.minBound.z) / cellSize.z));
+        int minCx = (int)std::floor(stats.minB.x / cellSize);
+        int minCy = (int)std::floor(stats.minB.y / cellSize);
+        int minCz = (int)std::floor(stats.minB.z / cellSize);
         
-        int maxCx = std::min(resolution - 1, (int)((stats.maxB.x - grid.minBound.x - 1e-5f) / cellSize.x)); 
-        int maxCy = std::min(resolution - 1, (int)((stats.maxB.y - grid.minBound.y - 1e-5f) / cellSize.y));
-        int maxCz = std::min(resolution - 1, (int)((stats.maxB.z - grid.minBound.z - 1e-5f) / cellSize.z));
+        int maxCx = (int)std::floor((stats.maxB.x - 1e-5f) / cellSize); 
+        int maxCy = (int)std::floor((stats.maxB.y - 1e-5f) / cellSize);
+        int maxCz = (int)std::floor((stats.maxB.z - 1e-5f) / cellSize);
         
         for (int z = minCz; z <= maxCz; ++z) {
             for (int y = minCy; y <= maxCy; ++y) {
                 for (int x = minCx; x <= maxCx; ++x) {
-                     int idx = (z * resolution + y) * resolution + x;
-                     grid.cells[idx].TouchCount++;
-                     grid.cells[idx].AvgSizeMean += avgSize;
-                     grid.cells[idx].VolRatio += ratio;
+                     int3 key = {x, y, z};
+                     GridCell& cell = cellMap[key];
+                     cell.TouchCount++;
+                     cell.AvgSizeMean += avgSize;
+                     cell.VolRatio += ratio;
                 }
             }
         }
     }
     
-    // Normalize
-    for (auto& cell : grid.cells) {
+    // Normalize and store
+    grid.sparseCells.reserve(cellMap.size());
+    for (auto& kv : cellMap) {
+        GridCell& cell = kv.second;
         if (cell.TouchCount > 0) {
             cell.AvgSizeMean /= cell.TouchCount;
             cell.VolRatio /= cell.TouchCount;
         }
+        grid.sparseCells.push_back({kv.first, cell});
     }
-    std::cout << "Grid statistics generated. Resolution: " << resolution << ", WorldSize: " << worldSize << std::endl;
+    std::cout << "Grid statistics generated. Cell Size: " << cellSize << ". Populated sparse cells: " << grid.sparseCells.size() << std::endl;
 }
 
 enum class DatasetMode { WKT, MESH, DT };
@@ -188,9 +176,7 @@ int main(int argc, char* argv[]) {
     DatasetMode mode = DatasetMode::MESH;
     bool shuffle = false;
     bool generateGrid = false;
-    int gridResolution = 128;
-    // Default to -1.0f to indicate "auto-detect bounds" unless user overrides
-    float worldSize = -1.0f;
+    float gridCellSize = 1.0f;
     
     std::cout << "Arguments received:" << std::endl;
     for (int i = 0; i < argc; ++i) {
@@ -218,14 +204,8 @@ int main(int argc, char* argv[]) {
             else if (arg == "--generate-grid") {
                 generateGrid = true;
             }
-            else if (arg == "--grid-resolution" && i + 1 < argc) {
-                gridResolution = std::stoi(argv[++i]);
-            }
-            else if (arg == "--euler-grid-size" && i + 1 < argc) { // Alias for backward compatibility
-                gridResolution = std::stoi(argv[++i]);
-            }
-            else if (arg == "--world-size" && i + 1 < argc) {
-                worldSize = std::stof(argv[++i]);
+            else if (arg == "--grid-cell-size" && i + 1 < argc) {
+                gridCellSize = std::stof(argv[++i]);
             }
             else if (arg == "--gamma" && i + 1 < argc) {
                // ignored in preprocessing, but consume it to avoid error if passed
@@ -243,8 +223,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "  --output-timing <path>     Path to JSON file for preprocessing timing output" << std::endl;
                 std::cout << "  --shuffle                  Randomly translate each loaded object" << std::endl;
                 std::cout << "  --generate-grid            Generate grid statistics for selectivity estimation" << std::endl;
-                std::cout << "  --grid-resolution <N>      Grid resolution (default: 128)" << std::endl;
-                std::cout << "  --world-size <S>           World size (default: auto-detected)" << std::endl;
+                std::cout << "  --grid-cell-size <S>       Grid cell size (default: 1.0)" << std::endl;
                 return 0;
             }
             else {
@@ -343,7 +322,7 @@ int main(int argc, char* argv[]) {
 
     if (generateGrid) {
         timer.next("Generating Grid Statistics");
-        generateGridStats(geometry, geometry.grid, gridResolution, worldSize);
+        generateGridStats(geometry, geometry.grid, gridCellSize);
     }
 
     timer.next("Extracting Edges");
@@ -373,11 +352,10 @@ int main(int argc, char* argv[]) {
     std::cout << "Total vertices: " << geometry.vertices.size() << std::endl;
     std::cout << "Total triangles: " << geometry.indices.size() << std::endl;
     std::cout << "Total extracted edges: " << geometry.edges.numEdges() << std::endl;
-    std::cout << "Universe Extents: [" << (geometry.grid.maxBound.x - geometry.grid.minBound.x) << ", "
-              << (geometry.grid.maxBound.y - geometry.grid.minBound.y) << ", "
-              << (geometry.grid.maxBound.z - geometry.grid.minBound.z) << "]" << std::endl;
-    std::cout << "Universe Min: [" << geometry.grid.minBound.x << ", " << geometry.grid.minBound.y << ", " << geometry.grid.minBound.z << "]" << std::endl;
-    std::cout << "Universe Max: [" << geometry.grid.maxBound.x << ", " << geometry.grid.maxBound.y << ", " << geometry.grid.maxBound.z << "]" << std::endl;
+    if (geometry.grid.hasGrid) {
+        std::cout << "Grid cell size: " << geometry.grid.cellSize << std::endl;
+        std::cout << "Populated sparse grid cells: " << geometry.grid.sparseCells.size() << std::endl;
+    }
     std::cout << "Geometry data saved to: " << outputGeometryPath << std::endl;
     std::cout << "Timing data saved to: " << outputTimingPath << std::endl;
     

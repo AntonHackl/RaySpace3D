@@ -83,10 +83,7 @@ GeometryData DtMeshDatasetLoader::load(const std::string& filePath) {
         }
         
         geometry.totalTriangles = geometry.indices.size();
-        if (!geometry.vertices.empty()) {
-            geometry.grid.minBound = minB;
-            geometry.grid.maxBound = maxB;
-        }
+        // Legacy bounds removed from GridData
         std::cout << "Total vertices: " << geometry.vertices.size() << std::endl;
         std::cout << "Total triangles: " << geometry.totalTriangles << std::endl;
 

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <unordered_map>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -126,14 +127,14 @@ unsigned long long nextPow2(unsigned long long v) {
 }
 
 // Helper to calculate global average size of objects from grid statistics
-float calculateGlobalAvgSize(const std::vector<GridCell>& cells) {
+float calculateGlobalAvgSize(const std::vector<SparseGridEntry>& sparseCells) {
     double totalSize = 0.0;
     long long totalCount = 0;
     
-    for (const auto& cell : cells) {
-        if (cell.TouchCount > 0) {
-            totalSize += (double)cell.AvgSizeMean * (double)cell.TouchCount;
-            totalCount += cell.TouchCount;
+    for (const auto& entry : sparseCells) {
+        if (entry.stats.TouchCount > 0) {
+            totalSize += (double)entry.stats.AvgSizeMean * (double)entry.stats.TouchCount;
+            totalCount += entry.stats.TouchCount;
         }
     }
     
@@ -142,14 +143,14 @@ float calculateGlobalAvgSize(const std::vector<GridCell>& cells) {
 }
 
 // Helper to calculate global average VolRatio from grid statistics
-float calculateGlobalAvgVolRatio(const std::vector<GridCell>& cells) {
+float calculateGlobalAvgVolRatio(const std::vector<SparseGridEntry>& sparseCells) {
     double totalRatio = 0.0;
     long long totalCount = 0;
     
-    for (const auto& cell : cells) {
-        if (cell.TouchCount > 0) {
-            totalRatio += (double)cell.VolRatio * (double)cell.TouchCount;
-            totalCount += cell.TouchCount;
+    for (const auto& entry : sparseCells) {
+        if (entry.stats.TouchCount > 0) {
+            totalRatio += (double)entry.stats.VolRatio * (double)entry.stats.TouchCount;
+            totalCount += entry.stats.TouchCount;
         }
     }
     
@@ -253,58 +254,87 @@ int main(int argc, char* argv[]) {
         long long estimatedPairs = 0;
 
         if (mesh1.grid.hasGrid && mesh2.grid.hasGrid) {
-            float width = mesh1.grid.maxBound.x - mesh1.grid.minBound.x;
-            float height = mesh1.grid.maxBound.y - mesh1.grid.minBound.y;
-            float depth = mesh1.grid.maxBound.z - mesh1.grid.minBound.z;
-            float csX = width / mesh1.grid.resolution.x;
-            float csY = height / mesh1.grid.resolution.y;
-            float csZ = depth / mesh1.grid.resolution.z;
-            float cellVolume = csX * csY * csZ;
+            if (std::abs(mesh1.grid.cellSize - mesh2.grid.cellSize) > 1e-5f) {
+                if (verbose) {
+                    std::cerr << "Warning: Grid cell sizes mismatch (Mesh1: " << mesh1.grid.cellSize 
+                              << ", Mesh2: " << mesh2.grid.cellSize << "). Estimation may be invalid." << std::endl;
+                }
+            }
 
-            int numCells = mesh1.grid.resolution.x * mesh1.grid.resolution.y * mesh1.grid.resolution.z;
-            if (mesh1.grid.cells.size() == (size_t)numCells && mesh2.grid.cells.size() == (size_t)numCells) {
-                float estimatedPairsFloat = estimateOverlapSelectivity(
-                    mesh1.grid.cells.data(),
-                    mesh2.grid.cells.data(),
-                    numCells,
+            float cellVolume = mesh1.grid.cellSize * mesh1.grid.cellSize * mesh1.grid.cellSize;
+
+            struct Int3Hash {
+                size_t operator()(const int3& k) const {
+                    return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1) ^ (std::hash<int>()(k.z) << 2);
+                }
+            };
+            struct Int3Equal {
+                bool operator()(const int3& a, const int3& b) const {
+                    return a.x == b.x && a.y == b.y && a.z == b.z;
+                }
+            };
+
+            std::unordered_map<int3, GridCell, Int3Hash, Int3Equal> mapA;
+            for (const auto& entry : mesh1.grid.sparseCells) {
+                mapA[entry.index] = entry.stats;
+            }
+
+            std::vector<GridCell> matchedA;
+            std::vector<GridCell> matchedB;
+
+            for (const auto& entry : mesh2.grid.sparseCells) {
+                auto it = mapA.find(entry.index);
+                if (it != mapA.end()) {
+                    matchedA.push_back(it->second);
+                    matchedB.push_back(entry.stats);
+                }
+            }
+
+            int numMatchedCells = matchedA.size();
+
+            float estimatedPairsFloat = 0.0f;
+            if (numMatchedCells > 0) {
+                estimatedPairsFloat = estimateOverlapSelectivity(
+                    matchedA.data(),
+                    matchedB.data(),
+                    numMatchedCells,
                     cellVolume,
                     epsilon,
                     gamma
                 );
+            }
 
-                float avgSize1 = calculateGlobalAvgSize(mesh1.grid.cells);
-                float avgSize2 = calculateGlobalAvgSize(mesh2.grid.cells);
-                float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.cells);
-                float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.cells);
+            float avgSize1 = calculateGlobalAvgSize(mesh1.grid.sparseCells);
+            float avgSize2 = calculateGlobalAvgSize(mesh2.grid.sparseCells);
+            float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.sparseCells);
+            float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.sparseCells);
 
-                float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
-                float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
+            float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
+            float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
 
-                float combinedSize = effectiveSize1 + effectiveSize2;
-                float minkowskiVol = combinedSize * combinedSize * combinedSize;
+            float combinedSize = effectiveSize1 + effectiveSize2;
+            float minkowskiVol = combinedSize * combinedSize * combinedSize;
 
-                if (cellVolume < 1e-9f) cellVolume = 1e-9f;
+            if (cellVolume < 1e-9f) cellVolume = 1e-9f;
 
-                float alpha = minkowskiVol / cellVolume;
-                if (alpha < 1.0f) alpha = 1.0f;
+            float alpha = minkowskiVol / cellVolume;
+            if (alpha < 1.0f) alpha = 1.0f;
 
-                estimatedPairs = (long long)(estimatedPairsFloat / alpha);
+            estimatedPairs = (long long)(estimatedPairsFloat / alpha);
 
-                if (verbose) {
-                    std::cout << "\n=== Selectivity Estimation (Overlap) ===" << std::endl;
-                    std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
-                    std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
-                    std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
-                    std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
-                    std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
-                    std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
-                    std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
-                    std::cout << "Replication Factor (alpha):" << alpha << std::endl;
-                    std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
-                    std::cout << "==============================\n" << std::endl;
-                }
-            } else if (verbose) {
-                std::cerr << "Error: Grid mismatch. Skipping estimation." << std::endl;
+            if (verbose) {
+                std::cout << "\n=== Selectivity Estimation (Overlap) ===" << std::endl;
+                std::cout << "Matched Sparse Cells:      " << numMatchedCells << std::endl;
+                std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
+                std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
+                std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
+                std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
+                std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
+                std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
+                std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
+                std::cout << "Replication Factor (alpha):" << alpha << std::endl;
+                std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+                std::cout << "==============================\n" << std::endl;
             }
         } else if (verbose) {
             std::cout << "Skipping estimation: Grid data not found." << std::endl;
@@ -473,10 +503,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh1 objects: " << mesh1NumObjects << std::endl;
     std::cout << "Mesh2 triangles: " << mesh2NumTriangles << std::endl;
     std::cout << "Mesh2 objects: " << mesh2NumObjects << std::endl;
-    std::cout << "Mesh1 Universe Min: [" << mesh1.grid.minBound.x << ", " << mesh1.grid.minBound.y << ", " << mesh1.grid.minBound.z << "]" << std::endl;
-    std::cout << "Mesh1 Universe Max: [" << mesh1.grid.maxBound.x << ", " << mesh1.grid.maxBound.y << ", " << mesh1.grid.maxBound.z << "]" << std::endl;
-    std::cout << "Mesh2 Universe Min: [" << mesh2.grid.minBound.x << ", " << mesh2.grid.minBound.y << ", " << mesh2.grid.minBound.z << "]" << std::endl;
-    std::cout << "Mesh2 Universe Max: [" << mesh2.grid.maxBound.x << ", " << mesh2.grid.maxBound.y << ", " << mesh2.grid.maxBound.z << "]" << std::endl;
+
     std::cout << "Unique object pairs: " << finalNumUnique << std::endl;
 
     timer.finish(outputJsonPath);

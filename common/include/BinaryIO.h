@@ -9,7 +9,7 @@ namespace RaySpace {
 namespace IO {
 
 constexpr uint32_t BINARY_FILE_MAGIC = 0x52334442; // "R3DB"
-constexpr uint32_t BINARY_FILE_VERSION = 2;
+constexpr uint32_t BINARY_FILE_VERSION = 3;
 
 struct FileHeader {
     uint32_t magic;
@@ -26,10 +26,8 @@ struct FileHeader {
 };
 
 struct GridParams {
-    float minBound[3];
-    float maxBound[3];
-    uint32_t resolution[3];
-    uint32_t padding; // Align
+    float cellSize;
+    uint32_t numSparseCells;
 };
 
 inline bool writeBinaryFile(const std::string& filename, const GeometryData& geometry) {
@@ -76,25 +74,13 @@ inline bool writeBinaryFile(const std::string& filename, const GeometryData& geo
 
     if (header.hasGrid) {
         GridParams gp;
-        gp.minBound[0] = geometry.grid.minBound.x;
-        gp.minBound[1] = geometry.grid.minBound.y;
-        gp.minBound[2] = geometry.grid.minBound.z;
-        gp.maxBound[0] = geometry.grid.maxBound.x;
-        gp.maxBound[1] = geometry.grid.maxBound.y;
-        gp.maxBound[2] = geometry.grid.maxBound.z;
-        gp.resolution[0] = geometry.grid.resolution.x;
-        gp.resolution[1] = geometry.grid.resolution.y;
-        gp.resolution[2] = geometry.grid.resolution.z;
+        gp.cellSize = geometry.grid.cellSize;
+        gp.numSparseCells = static_cast<uint32_t>(geometry.grid.sparseCells.size());
 
         out.write(reinterpret_cast<const char*>(&gp), sizeof(GridParams));
 
-        size_t numCells = geometry.grid.cells.size();
-        if (numCells != (size_t)gp.resolution[0] * gp.resolution[1] * gp.resolution[2]) {
-            std::cerr << "Warning: Grid cell count mismatch in write!" << std::endl;
-        }
-        
-        if (numCells > 0)
-            out.write(reinterpret_cast<const char*>(geometry.grid.cells.data()), numCells * sizeof(GridCell));
+        if (gp.numSparseCells > 0)
+            out.write(reinterpret_cast<const char*>(geometry.grid.sparseCells.data()), gp.numSparseCells * sizeof(SparseGridEntry));
     }
 
     out.close();
@@ -164,15 +150,13 @@ inline GeometryData readBinaryFile(const std::string& filename) {
         GridParams gp;
         in.read(reinterpret_cast<char*>(&gp), sizeof(GridParams));
 
-        geometry.grid.minBound = {gp.minBound[0], gp.minBound[1], gp.minBound[2]};
-        geometry.grid.maxBound = {gp.maxBound[0], gp.maxBound[1], gp.maxBound[2]};
-        geometry.grid.resolution = {gp.resolution[0], gp.resolution[1], gp.resolution[2]};
-
-        size_t numCells = (size_t)gp.resolution[0] * gp.resolution[1] * gp.resolution[2];
-        geometry.grid.cells.resize(numCells);
+        geometry.grid.cellSize = gp.cellSize;
         
-        if (numCells > 0)
-            in.read(reinterpret_cast<char*>(geometry.grid.cells.data()), numCells * sizeof(GridCell));
+        uint32_t numSparseCells = gp.numSparseCells;
+        geometry.grid.sparseCells.resize(numSparseCells);
+        
+        if (numSparseCells > 0)
+            in.read(reinterpret_cast<char*>(geometry.grid.sparseCells.data()), numSparseCells * sizeof(SparseGridEntry));
     }
 
     in.close();

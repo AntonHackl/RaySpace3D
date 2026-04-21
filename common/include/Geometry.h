@@ -12,11 +12,14 @@
 // cuda_runtime.h already included via PinnedMemory.h
 #endif
 
+struct SparseGridEntry {
+    int3 index;
+    GridCell stats;
+};
+
 struct GridData {
-    float3 minBound;
-    float3 maxBound;
-    uint3 resolution;
-    std::vector<GridCell> cells;
+    float cellSize = 0.0f;
+    std::vector<SparseGridEntry> sparseCells;
     bool hasGrid = false;
 };
 

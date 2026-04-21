@@ -99,8 +99,7 @@ GeometryData PolygonDatasetLoader::load(const std::string& wktFilePath) {
     }
     std::cout << "Dataset converted to " << geometry.vertices.size() << " vertices and " << geometry.indices.size() << " triangles" << std::endl;
     if (!geometry.vertices.empty()) {
-        geometry.grid.minBound = minB;
-        geometry.grid.maxBound = maxB;
+        // Legacy bounds removed from GridData
     }
 
     std::cout << "Using dataset triangles for raytracing acceleration structure" << std::endl;

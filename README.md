@@ -87,7 +87,7 @@ Convert raw mesh files (`.obj` or `.dt`) into the binary format consumed by the 
 
 # With grid statistics for selectivity estimation
 ./preprocess_dataset --dataset input.obj --output-geometry output.pre \
-    --generate-grid --grid-resolution 128
+    --generate-grid --grid-cell-size 128
 ```
 
 **Options:**
@@ -100,7 +100,7 @@ Convert raw mesh files (`.obj` or `.dt`) into the binary format consumed by the 
 | `--output-timing <path>` | Timing JSON output (default: `preprocessing_timing.json`) |
 | `--shuffle` | Apply random translation to each object |
 | `--generate-grid` | Compute grid statistics for selectivity estimation |
-| `--grid-resolution <N>` | Grid cells per axis (default: 128) |
+| `--grid-cell-size <N>` | Grid cells per axis (default: 128) |
 | `--world-size <S>` | Fixed world bounds; omit to auto-detect from data |
 
 ### 2. Query
