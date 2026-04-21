@@ -112,7 +112,7 @@ set(RAYSPACE_MAIN_SOURCE ${SRC_DIR}/applications/rayspace_main.cpp)
 set(FILTER_REFINE_SOURCE ${SRC_DIR}/applications/rayspace_filter_refine_main.cpp)
 set(MESH_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/rayspace_mesh_overlap_main.cpp)
 set(ESTIMATED_INTERSECTION_APP_SOURCE ${SRC_DIR}/applications/raytracer_intersection_estimated_main.cpp)
-set(ESTIMATED_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/raytracer_overlap_estimated_main.cpp)
+set(ESTIMATED_OVERLAP_APP_SOURCE ${SRC_DIR}/applications/deprecated/raytracer_overlap_estimated_main.cpp)
 set(ESTIMATED_OVERLAP_DIRECT_APP_SOURCE ${SRC_DIR}/applications/raytracer_overlap_direct_estimation_main.cpp)
 set(CONTAINMENT_APP_SOURCE ${SRC_DIR}/applications/raytracer_containment_main.cpp)
 

@@ -13,23 +13,23 @@
 #include <cmath>
 #include <chrono>
 #include <unordered_map>
-#include "../optix/OptixContext.h"
-#include "../optix/OptixPipeline.h"
-#include "../optix/OptixAccelerationStructure.h"
+#include "../../optix/OptixContext.h"
+#include "../../optix/OptixPipeline.h"
+#include "../../optix/OptixAccelerationStructure.h"
 #include "GeometryUploader.h"
 #include "Geometry.h"
 #include "GeometryIO.h"
-#include "../cuda/mesh_overlap.h"
-#include "../cuda/mesh_query_deduplication.h"
+#include "../../cuda/mesh_overlap.h"
+#include "../../cuda/mesh_query_deduplication.h"
 #include "scan_utils.h"
 #include "common.h"
-#include "../optix/OptixHelpers.h"
-#include "../raytracing/MeshOverlapEdgesLauncher.h"
-#include "../geometry/PrecomputedEdgeData.h"
-#include "../timer.h"
-#include "../ptx_utils.h"
-#include "../cuda/estimated_overlap.h"
-#include "app_cli_options.h"
+#include "../../optix/OptixHelpers.h"
+#include "../../raytracing/MeshOverlapEdgesLauncher.h"
+#include "../../geometry/PrecomputedEdgeData.h"
+#include "timer.h"
+#include "ptx_utils.h"
+#include "estimated_overlap.h"
+#include "../app_cli_options.h"
 
 struct QueryResults {
     MeshQueryResult* d_merged_results;
