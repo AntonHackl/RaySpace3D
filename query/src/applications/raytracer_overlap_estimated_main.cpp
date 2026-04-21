@@ -100,7 +100,15 @@ QueryResults executeHashQuery(
     MeshQueryResult* d_merged_results = nullptr;
     CUDA_CHECK(cudaMalloc(&d_merged_results, max_output * sizeof(MeshQueryResult)));
     
+    auto t_dedup_start = std::chrono::high_resolution_clock::now();
     int numUnique = compact_hash_table_pairs(d_hash_table, hash_table_size, d_merged_results, max_output);
+    auto t_dedup_end = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "compact_hash_table_pairs",
+            std::chrono::duration_cast<std::chrono::microseconds>(t_dedup_end - t_dedup_start).count()
+        );
+    }
     
     if (verbose) {
          std::cout << "Hash Table Query found " << numUnique << " unique pairs." << std::endl;

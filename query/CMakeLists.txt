@@ -241,7 +241,8 @@ add_executable(raytracer_containment
     ${RAYTRACING_SOURCES}
     ${RESULT_COMPACTION_SOURCE}
     ${MESH_QUERY_DEDUP_SOURCE}
-    ${SCAN_UTILS_SOURCE})
+    ${SCAN_UTILS_SOURCE}
+    ${ESTIMATED_INTERSECTION_SOURCE})
 
 foreach(TARGET_NAME raytracer raytracer_filter_refine raytracer_mesh_overlap raytracer_intersection_estimated raytracer_overlap_estimated raytracer_overlap_direct_estimation raytracer_containment)
     target_include_directories(${TARGET_NAME} PRIVATE 
@@ -412,12 +413,21 @@ add_dependencies(raytracer_overlap_direct_estimation copy_ptx)
 
 add_custom_command(TARGET raytracer_overlap_direct_estimation POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${PTX_FILE}"
-    "$<TARGET_FILE_DIR:raytracer_overlap_direct_estimation>/raytracing${OPTIX_MODULE_EXTENSION}"
-    COMMENT "Copying raytracing.ptx...")
-
-add_custom_command(TARGET raytracer_overlap_direct_estimation POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${MESH_OVERLAP_PTX_FILE}"
     "$<TARGET_FILE_DIR:raytracer_overlap_direct_estimation>/mesh_overlap${OPTIX_MODULE_EXTENSION}"
     COMMENT "Copying mesh_overlap.ptx...")
+
+# Containment
+add_dependencies(raytracer_containment copy_ptx)
+
+add_custom_command(TARGET raytracer_containment POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${PTX_FILE}"
+    "$<TARGET_FILE_DIR:raytracer_containment>/raytracing${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying raytracing.ptx...")
+
+add_custom_command(TARGET raytracer_containment POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${MESH_CONTAINMENT_PTX_FILE}"
+    "$<TARGET_FILE_DIR:raytracer_containment>/mesh_containment${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying mesh_containment.ptx...")

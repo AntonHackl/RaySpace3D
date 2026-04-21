@@ -136,7 +136,15 @@ QueryResults executeTwoPassQueryEdgesOptimized(
     CUDA_CHECK(cudaFree(d_collision_offsets2));
     
     // Deduplicate
+    auto t_dedup_0 = std::chrono::high_resolution_clock::now();
     long long numUnique = merge_and_deduplicate_pairs_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
+    auto t_dedup_1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "gpu deduplication",
+            std::chrono::duration_cast<std::chrono::microseconds>(t_dedup_1 - t_dedup_0).count()
+        );
+    }
     
     if (verbose) {
         std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;
@@ -240,7 +248,15 @@ QueryResults executeTwoPassQuery(
     CUDA_CHECK(cudaFree(d_collision_offsets2));
     
     // Deduplicate (auto-batches if GPU memory is tight)
+    auto t_dedup_0 = std::chrono::high_resolution_clock::now();
     long long numUnique = merge_and_deduplicate_pairs_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
+    auto t_dedup_1 = std::chrono::high_resolution_clock::now();
+    if (timer) {
+        timer->addMeasurement(
+            "gpu deduplication",
+            std::chrono::duration_cast<std::chrono::microseconds>(t_dedup_1 - t_dedup_0).count()
+        );
+    }
     
     if (verbose) {
         std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;

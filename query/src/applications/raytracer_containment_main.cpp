@@ -10,7 +10,9 @@
 #include <sstream>
 #include <set>
 #include <algorithm>
+#include <cmath>
 #include <chrono>
+#include <unordered_map>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
 #include "../optix/OptixAccelerationStructure.h"
@@ -26,7 +28,40 @@
 #include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
 #include "../ptx_utils.h"
+#include "../cuda/estimated_intersection.h"
 #include "app_cli_options.h"
+
+// Helper to calculate global average size of objects from grid statistics
+float calculateGlobalAvgSize(const std::vector<SparseGridEntry>& sparseCells) {
+    double totalSize = 0.0;
+    long long totalCount = 0;
+    
+    for (const auto& entry : sparseCells) {
+        if (entry.stats.TouchCount > 0) {
+            totalSize += (double)entry.stats.AvgSizeMean * (double)entry.stats.TouchCount;
+            totalCount += entry.stats.TouchCount;
+        }
+    }
+    
+    if (totalCount == 0) return 0.0f;
+    return (float)(totalSize / totalCount);
+}
+
+// Helper to calculate global average VolRatio from grid statistics
+float calculateGlobalAvgVolRatio(const std::vector<SparseGridEntry>& sparseCells) {
+    double totalRatio = 0.0;
+    long long totalCount = 0;
+    
+    for (const auto& entry : sparseCells) {
+        if (entry.stats.TouchCount > 0) {
+            totalRatio += (double)entry.stats.VolRatio * (double)entry.stats.TouchCount;
+            totalCount += entry.stats.TouchCount;
+        }
+    }
+    
+    if (totalCount == 0) return 1.0f;
+    return (float)(totalRatio / totalCount);
+}
 
 // ---------------------------------------------------------------------
 // Containment query
@@ -55,6 +90,9 @@ public:
 
     bool useAnyhitPointInMesh = true;
     bool includeOverlapPairs = false;
+    float gamma = 0.8f;
+    float epsilon = 0.001f;
+    float hashLoadFactor = 0.5f;
 
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
@@ -66,6 +104,9 @@ public:
         appendBenchmarkRunHelp(options);
         options.emplace_back("--use-anyhit-point-in-mesh", "Use AnyHit shader accumulation for point-in-mesh parity (default: enabled)");
         options.emplace_back("--include-overlap-pairs", "Include overlap/touch pairs in output (union of overlap + strict containment)");
+        options.emplace_back("--gamma <float>", "Estimation gamma (default: 0.8)");
+        options.emplace_back("--epsilon <float>", "Estimation epsilon (default: 0.001)");
+        options.emplace_back("--hash-load-factor <float>", "Hash load factor for table sizing (default: 0.5)");
         appendNoExportHelp(options);
         appendHelpFlag(options);
 
@@ -88,6 +129,18 @@ protected:
         }
         if (arg == "--include-overlap-pairs") {
             includeOverlapPairs = true;
+            return true;
+        }
+        if (arg == "--gamma" && i + 1 < argc) {
+            gamma = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--epsilon" && i + 1 < argc) {
+            epsilon = std::stof(argv[++i]);
+            return true;
+        }
+        if (arg == "--hash-load-factor" && i + 1 < argc) {
+            hashLoadFactor = std::stof(argv[++i]);
             return true;
         }
         return false;
@@ -118,6 +171,9 @@ int main(int argc, char* argv[]) {
     const bool exportResults = options.exportResults;
     const bool useAnyhitPointInMesh = options.useAnyhitPointInMesh;
     const bool includeOverlapPairs = options.includeOverlapPairs;
+    const float gamma = options.gamma;
+    const float epsilon = options.epsilon;
+    const float hashLoadFactor = options.hashLoadFactor;
 
     std::cout << "=== Mesh Containment Query ===" << std::endl;
     std::cout << "(checks which B-objects are fully contained inside A-objects)" << std::endl;
@@ -245,16 +301,6 @@ int main(int argc, char* argv[]) {
         CUDA_CHECK(cudaMalloc(&d_anyhit_last_t_bits, maxTrackedObjects * sizeof(unsigned int)));
     }
 
-    int intersectionHTSize  = 16777216;  // 16 M slots ≈ 128 MB
-    int containmentHTSize   = 16777216;
-
-    unsigned long long* d_intersectionHT = nullptr;
-    unsigned long long* d_containmentHT  = nullptr;
-    unsigned long long* d_containmentHT_reverse = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_intersectionHT, (size_t)intersectionHTSize * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_containmentHT,  (size_t)containmentHTSize  * sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_containmentHT_reverse, (size_t)containmentHTSize * sizeof(unsigned long long)));
-
     // ------------------------------------------------------------------
     // Warmup
     // ------------------------------------------------------------------
@@ -266,9 +312,103 @@ int main(int argc, char* argv[]) {
         int overlapPairCount = 0;
     };
 
+    int intersectionHTSize = 16777216;
+    int containmentHTSize = 16777216;
+
+    auto estimatePairsAndSizeTables = [&](bool verbose) {
+        long long estimatedPairs = 0;
+        if (meshAData.grid.hasGrid && meshBData.grid.hasGrid) {
+            float cellVolume = meshAData.grid.cellSize * meshAData.grid.cellSize * meshAData.grid.cellSize;
+
+            struct Int3Hash {
+                size_t operator()(const int3& k) const {
+                    return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1) ^ (std::hash<int>()(k.z) << 2);
+                }
+            };
+            struct Int3Equal {
+                bool operator()(const int3& a, const int3& b) const {
+                    return a.x == b.x && a.y == b.y && a.z == b.z;
+                }
+            };
+
+            std::unordered_map<int3, GridCell, Int3Hash, Int3Equal> mapA;
+            for (const auto& entry : meshAData.grid.sparseCells) {
+                mapA[entry.index] = entry.stats;
+            }
+
+            std::vector<GridCell> matchedA;
+            std::vector<GridCell> matchedB;
+
+            for (const auto& entry : meshBData.grid.sparseCells) {
+                auto it = mapA.find(entry.index);
+                if (it != mapA.end()) {
+                    matchedA.push_back(it->second);
+                    matchedB.push_back(entry.stats);
+                }
+            }
+
+            int numMatchedCells = (int)matchedA.size();
+            float estimatedPairsFloat = 0.0f;
+            if (numMatchedCells > 0) {
+                estimatedPairsFloat = estimateIntersectionSelectivity(
+                    matchedA.data(), matchedB.data(), numMatchedCells,
+                    cellVolume, epsilon, gamma);
+            }
+
+            float avgSize1 = calculateGlobalAvgSize(meshAData.grid.sparseCells);
+            float avgSize2 = calculateGlobalAvgSize(meshBData.grid.sparseCells);
+            float avgVolRatio1 = calculateGlobalAvgVolRatio(meshAData.grid.sparseCells);
+            float avgVolRatio2 = calculateGlobalAvgVolRatio(meshBData.grid.sparseCells);
+            float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
+            float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
+            float combinedSize = effectiveSize1 + effectiveSize2;
+            float minkowskiVol = combinedSize * combinedSize * combinedSize;
+            if (cellVolume < 1e-9f) cellVolume = 1e-9f;
+            float alpha = minkowskiVol / cellVolume;
+            if (alpha < 1.0f) alpha = 1.0f;
+
+            estimatedPairs = (long long)(estimatedPairsFloat / alpha);
+
+            if (verbose) {
+                std::cout << "\n=== Containment Selectivity Estimation ===" << std::endl;
+                std::cout << "Matched Sparse Cells:      " << numMatchedCells << std::endl;
+                std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
+                std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+                std::cout << "==========================================\n" << std::endl;
+            }
+        }
+
+        if (estimatedPairs > 0) {
+            unsigned long long target = (unsigned long long)(estimatedPairs / hashLoadFactor);
+            if (target < 1024) target = 1024;
+            if (target > 536870912ULL) target = 536870912ULL; // Cap at 512M slots (~4GB each)
+            intersectionHTSize = (int)target;
+            containmentHTSize = (int)target;
+            if (intersectionHTSize % 2 == 0) intersectionHTSize++;
+            if (containmentHTSize % 2 == 0) containmentHTSize++;
+        }
+    };
+
+    unsigned long long* d_intersectionHT = nullptr;
+    unsigned long long* d_containmentHT  = nullptr;
+    unsigned long long* d_containmentHT_reverse = nullptr;
+
+    auto run_alloc_tables = [&]() {
+        CUDA_CHECK(cudaMalloc(&d_intersectionHT, (size_t)intersectionHTSize * sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMalloc(&d_containmentHT,  (size_t)containmentHTSize  * sizeof(unsigned long long)));
+        CUDA_CHECK(cudaMalloc(&d_containmentHT_reverse, (size_t)containmentHTSize * sizeof(unsigned long long)));
+    };
+
     auto runOnce = [&](bool verbose, bool recordBreakdownPhases) {
         if (recordBreakdownPhases) {
-            timer.addMeasurement("Selectivity Estimation", 0);
+            auto t_est_0 = std::chrono::high_resolution_clock::now();
+            estimatePairsAndSizeTables(verbose);
+            auto t_est_1 = std::chrono::high_resolution_clock::now();
+            timer.addMeasurement(
+                "Selectivity Estimation",
+                std::chrono::duration_cast<std::chrono::microseconds>(t_est_1 - t_est_0).count());
+            
+            run_alloc_tables();
         }
 
         CUDA_CHECK(cudaMemset(d_intersectionHT, 0xFF,
@@ -371,8 +511,15 @@ int main(int argc, char* argv[]) {
         MeshQueryResult* d_containment_results = nullptr;
         CUDA_CHECK(cudaMalloc(&d_containment_results, maxContainmentOutput * sizeof(MeshQueryResult)));
 
+        auto t_dedup_0 = std::chrono::high_resolution_clock::now();
         int numContained = compact_hash_table_pairs(
             d_containmentHT, containmentHTSize, d_containment_results, maxContainmentOutput);
+        auto t_dedup_1 = std::chrono::high_resolution_clock::now();
+        if (recordBreakdownPhases) {
+            timer.addMeasurement(
+                "compact_hash_table_pairs (containment)",
+                std::chrono::duration_cast<std::chrono::microseconds>(t_dedup_1 - t_dedup_0).count());
+        }
 
         if (verbose) {
             std::cout << "Containment pairs found: " << numContained << std::endl;
@@ -397,8 +544,15 @@ int main(int argc, char* argv[]) {
             MeshQueryResult* d_overlap_results = nullptr;
             CUDA_CHECK(cudaMalloc(&d_overlap_results, maxOverlapOutput * sizeof(MeshQueryResult)));
 
+            auto t_dedup_overlap_0 = std::chrono::high_resolution_clock::now();
             int numOverlap = compact_hash_table_pairs(
                 d_intersectionHT, intersectionHTSize, d_overlap_results, maxOverlapOutput);
+            auto t_dedup_overlap_1 = std::chrono::high_resolution_clock::now();
+            if (recordBreakdownPhases) {
+                timer.addMeasurement(
+                    "compact_hash_table_pairs (overlap)",
+                    std::chrono::duration_cast<std::chrono::microseconds>(t_dedup_overlap_1 - t_dedup_overlap_0).count());
+            }
             runResult.overlapPairCount = numOverlap;
 
             if (verbose) {
@@ -424,6 +578,8 @@ int main(int argc, char* argv[]) {
 
     if (warmupRuns > 0) {
         std::cout << "Running " << warmupRuns << " warmup iterations..." << std::endl;
+        estimatePairsAndSizeTables(false);
+        run_alloc_tables();
         for (int w = 0; w < warmupRuns; ++w) runOnce(false, false);
     }
 
@@ -438,6 +594,12 @@ int main(int argc, char* argv[]) {
     int finalContainmentCount = 0;
     int finalOverlapCount = 0;
     for (int run = 0; run < numberOfRuns; ++run) {
+        // Free tables from previous run if any
+        if (d_intersectionHT) CUDA_CHECK(cudaFree(d_intersectionHT));
+        if (d_containmentHT) CUDA_CHECK(cudaFree(d_containmentHT));
+        if (d_containmentHT_reverse) CUDA_CHECK(cudaFree(d_containmentHT_reverse));
+        d_intersectionHT = d_containmentHT = d_containmentHT_reverse = nullptr;
+
         ContainmentRunResult runResult = runOnce(run == numberOfRuns - 1, true);
         finalContainmentCount = runResult.containmentPairCount;
         finalOverlapCount = runResult.overlapPairCount;
