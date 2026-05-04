@@ -210,9 +210,9 @@ float calculateGlobalAvgVolRatio(const std::vector<SparseGridEntry>& sparseCells
     return (float)(totalRatio / totalCount);
 }
 
-class IntersectionEstimatedCliOptions : public MeshPairCliOptions {
+class IntersectionEstimatedCliOptions : public BenchmarkMeshPairCliOptions {
 public:
-    IntersectionEstimatedCliOptions() : MeshPairCliOptions("estimated_intersection_timing.json") {}
+    IntersectionEstimatedCliOptions() : BenchmarkMeshPairCliOptions("estimated_intersection_timing.json") {}
 
     std::string queryDirectionArg = "both";
     bool estimateOnly = false;
@@ -230,6 +230,7 @@ public:
     void printHelp(const char* exeName) const {
         std::vector<HelpEntry> options;
         appendMeshPairHelp(options);
+        appendBenchmarkRunHelp(options);
         options.emplace_back("--gamma <float>", "Estimation gamma (default: 0.8)");
         options.emplace_back("--epsilon <float>", "Estimation epsilon (default: 0.001)");
         options.emplace_back("--estimate-only", "Run only selectivity estimation");
@@ -339,6 +340,7 @@ int main(int argc, char* argv[]) {
     const int overlapMaxIterations = options.overlapMaxIterations;
     const int containmentMaxIterations = options.containmentMaxIterations;
     const bool useAnyhitContainment = options.useAnyhitContainment;
+    const int warmupRuns = options.warmupRuns;
 
     QueryDirection queryDirection = QueryDirection::Both;
     try {
@@ -685,6 +687,23 @@ int main(int argc, char* argv[]) {
     ContainmentTrackingBuffers containmentTrackingBuffers;
     containmentTrackingBuffers.allocate(mesh1NumObjects, mesh2NumObjects);
     containmentTrackingBuffers.setupLaunchParams(params1, params2);
+
+    timer.next("Warmup");
+    if (warmupRuns > 0) {
+        std::cout << "Running " << warmupRuns << " warmup iterations (hash query)..." << std::endl;
+        for (int warmup = 0; warmup < warmupRuns; ++warmup) {
+            QueryResults warmupResults = executeHashQuery(
+                intersectionLauncher,
+                params1, params2,
+                mesh1NumEdges, mesh2NumEdges,
+                mesh1NumObjects, mesh2NumObjects,
+                d_hash_table, hash_table_size, queryDirection,
+                nullptr,
+                false
+            );
+            if (warmupResults.d_merged_results) CUDA_CHECK(cudaFree(warmupResults.d_merged_results));
+        }
+    }
 
     timer.next("Query");
     std::cout << "Running Intersection Query..." << std::endl;
