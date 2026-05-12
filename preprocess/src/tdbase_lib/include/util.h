@@ -126,8 +126,8 @@ inline double logt(const char *format, struct timeval start, ...){
 print_lock.lock();
 va_list args;
 va_start(args, start);
-char sprint_buf[200];
-int n = vsprintf(sprint_buf, format, args);
+	char sprint_buf[4096];
+	vsnprintf(sprint_buf, sizeof(sprint_buf), format, args);
 va_end(args);
 long tid = 0;
 #if defined(__linux__)
@@ -154,8 +154,8 @@ inline void log(const char *format, ...){
 print_lock.lock();
 va_list args;
 va_start(args, format);
-char sprint_buf[200];
-int n = vsprintf(sprint_buf, format, args);
+	char sprint_buf[4096];
+	vsnprintf(sprint_buf, sizeof(sprint_buf), format, args);
 va_end(args);
 long tid = 0;
 #if defined(__linux__)

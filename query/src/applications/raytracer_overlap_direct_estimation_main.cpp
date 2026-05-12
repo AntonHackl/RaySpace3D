@@ -38,6 +38,7 @@ struct QueryResults {
     int numUnique;
     unsigned long long hashAccesses;
     unsigned long long hashContentions;
+    unsigned long long resultBufferCapacity;
 };
 
 enum class QueryDirection {
@@ -184,7 +185,7 @@ QueryResults executeHashQuery(
          }
     }
     
-    return {d_merged_results, numUnique, hashAccesses, hashContentions};
+    return {d_merged_results, numUnique, hashAccesses, hashContentions, static_cast<unsigned long long>(max_output)};
 }
 
 // Helper to calculate global average size of objects from grid statistics
@@ -607,6 +608,8 @@ int main(int argc, char* argv[]) {
     int finalNumUnique = 0;
     unsigned long long finalHashAccesses = 0;
     unsigned long long finalHashContentions = 0;
+    unsigned long long finalHashTableSize = 0;
+    unsigned long long finalResultBufferCapacity = 0;
     std::vector<MeshQueryResult> hostResults;
     for (int run = 0; run < numberOfRuns; ++run) {
         bool verboseRun = (run == 0);
@@ -625,6 +628,8 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
             }
+            std::cout << "Hash Table Allocated Bytes: "
+                      << (hash_table_size * sizeof(unsigned long long)) << std::endl;
         }
 
         unsigned long long* d_hash_table = nullptr;
@@ -657,6 +662,8 @@ int main(int argc, char* argv[]) {
         finalNumUnique = queryResults.numUnique;
         finalHashAccesses = queryResults.hashAccesses;
         finalHashContentions = queryResults.hashContentions;
+        finalHashTableSize = hash_table_size;
+        finalResultBufferCapacity = queryResults.resultBufferCapacity;
 
         if (trackHashContention) {
             double contentionPct = (queryResults.hashAccesses > 0)
@@ -701,6 +708,14 @@ int main(int argc, char* argv[]) {
         std::cout.unsetf(std::ios::floatfield);
     }
     std::cout << "Unique object pairs: " << finalNumUnique << std::endl;
+    std::cout << "Result Buffer Capacity: " << finalResultBufferCapacity << std::endl;
+    std::cout << "Result Buffer Allocated Bytes: "
+              << (finalResultBufferCapacity * sizeof(MeshQueryResult)) << std::endl;
+    std::cout << "Result Buffer Used Bytes: "
+              << (static_cast<unsigned long long>(finalNumUnique) * sizeof(MeshQueryResult)) << std::endl;
+    std::cout << "Hash Table Slots: " << finalHashTableSize << std::endl;
+    std::cout << "Hash Table Allocated Bytes: "
+              << (finalHashTableSize * sizeof(unsigned long long)) << std::endl;
 
     if (!pairsOutputPath.empty()) {
         std::ofstream csvFile(pairsOutputPath);
