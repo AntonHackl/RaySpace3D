@@ -32,9 +32,7 @@ struct MeshIntersectionLaunchParams {
     // Precomputed source edge rays (for overlap phase)
     float3* edge_starts;
     float3* edge_ends;
-    int* edge_source_object_counts;
-    int* edge_source_objects;
-    int* edge_source_object_offsets;
+    int* edge_source_object_ids;
     int num_edges;
     
     // Mesh2 acceleration structure

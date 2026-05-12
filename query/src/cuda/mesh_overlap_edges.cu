@@ -14,9 +14,7 @@ struct MeshOverlapEdgesLaunchParams {
     // Mesh1 edge data
     float3* edge_starts;
     float3* edge_ends;
-    int* edge_source_object_counts;
-    int* edge_source_objects;       // Flattened array of object IDs
-    int* edge_source_object_offsets;
+    int* edge_source_object_ids;
     int num_edges;
     
     // Mesh2 acceleration structure
@@ -107,8 +105,7 @@ __device__ void insert_hash_table_edges(int id1, int id2) {
 static __forceinline__ __device__ int trace_edge_multi_hits_edges(
     const float3& edgeStart,
     const float3& edgeEnd,
-    const int* sourceObjectIds,
-    int numSourceObjects,
+    int sourceObjectId,
     long long& writeCursor,
     float epsilon
 ) {
@@ -154,22 +151,18 @@ static __forceinline__ __device__ int trace_edge_multi_hits_edges(
         const int objectIdTarget = mesh_overlap_edges_params.mesh2_triangle_to_object[primitiveIndex];
         hitsFound++;
         
-        // Record results for ALL source objects that use this edge
-        for (int srcIdx = 0; srcIdx < numSourceObjects; ++srcIdx) {
-            int sourceObjectId = sourceObjectIds[srcIdx];
-            int outMesh1 = sourceObjectId;
-            int outMesh2 = objectIdTarget;
-            if (mesh_overlap_edges_params.swap_pair_order) {
-                outMesh1 = objectIdTarget;
-                outMesh2 = sourceObjectId;
-            }
+        int outMesh1 = sourceObjectId;
+        int outMesh2 = objectIdTarget;
+        if (mesh_overlap_edges_params.swap_pair_order) {
+            outMesh1 = objectIdTarget;
+            outMesh2 = sourceObjectId;
+        }
 
-            if (mesh_overlap_edges_params.use_hash_table) {
-                insert_hash_table_edges(outMesh1, outMesh2);
-            } else if (mesh_overlap_edges_params.pass == 2) {
-                const long long outIdx = writeCursor++;
-                mesh_overlap_edges_params.results[outIdx] = {outMesh1, outMesh2};
-            }
+        if (mesh_overlap_edges_params.use_hash_table) {
+            insert_hash_table_edges(outMesh1, outMesh2);
+        } else if (mesh_overlap_edges_params.pass == 2) {
+            const long long outIdx = writeCursor++;
+            mesh_overlap_edges_params.results[outIdx] = {outMesh1, outMesh2};
         }
         
         float next_t_min = t + epsilon;
@@ -179,7 +172,7 @@ static __forceinline__ __device__ int trace_edge_multi_hits_edges(
         current_t_min = next_t_min;
     }
 
-    return hitsFound * numSourceObjects;  // Total results = hits * source objects
+    return hitsFound;
 }
 
 extern "C" __global__ void __raygen__mesh_overlap_edges() {
@@ -193,9 +186,7 @@ extern "C" __global__ void __raygen__mesh_overlap_edges() {
     
     float3 edgeStart = mesh_overlap_edges_params.edge_starts[edgeIdx];
     float3 edgeEnd = mesh_overlap_edges_params.edge_ends[edgeIdx];
-    int numSourceObjects = mesh_overlap_edges_params.edge_source_object_counts[edgeIdx];
-    int offsetIntoFlat = mesh_overlap_edges_params.edge_source_object_offsets[edgeIdx];
-    const int* sourceObjectIds = &mesh_overlap_edges_params.edge_source_objects[offsetIntoFlat];
+    int sourceObjectId = mesh_overlap_edges_params.edge_source_object_ids[edgeIdx];
     
     const float epsilon = 1e-6f;
     
@@ -207,8 +198,7 @@ extern "C" __global__ void __raygen__mesh_overlap_edges() {
     int totalHits = trace_edge_multi_hits_edges(
         edgeStart,
         edgeEnd,
-        sourceObjectIds,
-        numSourceObjects,
+        sourceObjectId,
         writeCursor,
         epsilon);
     

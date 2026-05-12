@@ -615,9 +615,7 @@ int main(int argc, char* argv[]) {
     params1.mesh1_num_objects = mesh1NumObjects;
     params1.edge_starts = mesh1EdgeData.d_edge_starts;
     params1.edge_ends = mesh1EdgeData.d_edge_ends;
-    params1.edge_source_object_counts = mesh1EdgeData.d_source_object_counts;
-    params1.edge_source_objects = mesh1EdgeData.d_source_objects;
-    params1.edge_source_object_offsets = mesh1EdgeData.d_source_object_offsets;
+    params1.edge_source_object_ids = mesh1EdgeData.d_source_object_ids;
     params1.num_edges = mesh1NumEdges;
     params1.mesh2_handle = mesh2AS.getHandle();
     params1.mesh2_vertices = mesh2Uploader.getVertices();
@@ -633,9 +631,7 @@ int main(int argc, char* argv[]) {
     params2.mesh1_num_objects = mesh2NumObjects;
     params2.edge_starts = mesh2EdgeData.d_edge_starts;
     params2.edge_ends = mesh2EdgeData.d_edge_ends;
-    params2.edge_source_object_counts = mesh2EdgeData.d_source_object_counts;
-    params2.edge_source_objects = mesh2EdgeData.d_source_objects;
-    params2.edge_source_object_offsets = mesh2EdgeData.d_source_object_offsets;
+    params2.edge_source_object_ids = mesh2EdgeData.d_source_object_ids;
     params2.num_edges = mesh2NumEdges;
     params2.mesh2_handle = mesh1AS.getHandle();
     params2.mesh2_vertices = mesh1Uploader.getVertices();

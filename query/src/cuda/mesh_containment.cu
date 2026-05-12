@@ -82,9 +82,7 @@ extern "C" __global__ void __raygen__check_edges() {
 
     const float3 edgeStart = containment_params.src_edge_starts[edgeIdx];
     const float3 edgeEnd = containment_params.src_edge_ends[edgeIdx];
-    const int numSourceObjects = containment_params.src_edge_source_object_counts[edgeIdx];
-    const int sourceOffset = containment_params.src_edge_source_object_offsets[edgeIdx];
-    const int* sourceObjectIds = &containment_params.src_edge_source_objects[sourceOffset];
+    const int sourceObjectId = containment_params.src_edge_source_object_ids[edgeIdx];
 
     const float epsilon = 1e-6f;
 
@@ -137,20 +135,17 @@ extern "C" __global__ void __raygen__check_edges() {
         if (!sameHit) {
             const int hit_obj = containment_params.target_triangle_to_object[triangleIndex];
 
-            for (int i = 0; i < numSourceObjects; ++i) {
-                const int src_obj = sourceObjectIds[i];
-                // Always store as (A_obj, B_obj) regardless of direction.
-                if (containment_params.swap_ids == 0) {
-                    // B->A: src=B, hit=A -> (A=hit, B=src)
-                    cont_insert_table(containment_params.intersection_hash_table,
-                                      containment_params.intersection_hash_table_size,
-                                      hit_obj, src_obj);
-                } else {
-                    // A->B: src=A, hit=B -> (A=src, B=hit)
-                    cont_insert_table(containment_params.intersection_hash_table,
-                                      containment_params.intersection_hash_table_size,
-                                      src_obj, hit_obj);
-                }
+            // Always store as (A_obj, B_obj) regardless of direction.
+            if (containment_params.swap_ids == 0) {
+                // B->A: src=B, hit=A -> (A=hit, B=src)
+                cont_insert_table(containment_params.intersection_hash_table,
+                                  containment_params.intersection_hash_table_size,
+                                  hit_obj, sourceObjectId);
+            } else {
+                // A->B: src=A, hit=B -> (A=src, B=hit)
+                cont_insert_table(containment_params.intersection_hash_table,
+                                  containment_params.intersection_hash_table_size,
+                                  sourceObjectId, hit_obj);
             }
         }
 

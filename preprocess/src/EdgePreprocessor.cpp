@@ -22,18 +22,21 @@ struct QuantizedPoint {
 struct EdgeKey {
     QuantizedPoint a;
     QuantizedPoint b;
+    int objectId;
 
     bool operator<(const EdgeKey& other) const {
         if (a < other.a) return true;
         if (other.a < a) return false;
-        return b < other.b;
+        if (b < other.b) return true;
+        if (other.b < b) return false;
+        return objectId < other.objectId;
     }
 };
 
 struct EdgeInfo {
     float3 p0;
     float3 p1;
-    std::vector<int> sourceObjects;
+    int sourceObject;
 };
 
 } // namespace
@@ -80,39 +83,28 @@ EdgeData EdgePreprocessor::extractEdges(
                 std::swap(q0, q1);
             }
 
-            const EdgeKey edgeKey{q0, q1};
+            const EdgeKey edgeKey{q0, q1, sourceObject};
             auto it = uniqueEdgesMap.find(edgeKey);
             if (it == uniqueEdgesMap.end()) {
                 EdgeInfo info;
                 info.p0 = p0;
                 info.p1 = p1;
-                info.sourceObjects.push_back(sourceObject);
+                info.sourceObject = sourceObject;
                 uniqueEdgesMap.emplace(edgeKey, std::move(info));
                 continue;
-            }
-
-            auto& sourceObjects = it->second.sourceObjects;
-            if (std::find(sourceObjects.begin(), sourceObjects.end(), sourceObject) == sourceObjects.end()) {
-                sourceObjects.push_back(sourceObject);
             }
         }
     }
 
     edgeData.edgeStarts.reserve(uniqueEdgesMap.size());
     edgeData.edgeEnds.reserve(uniqueEdgesMap.size());
-    edgeData.sourceObjectOffsets.reserve(uniqueEdgesMap.size());
-    edgeData.sourceObjectCounts.reserve(uniqueEdgesMap.size());
+    edgeData.sourceObjectIds.reserve(uniqueEdgesMap.size());
 
     for (const auto& kv : uniqueEdgesMap) {
         const EdgeInfo& edge = kv.second;
         edgeData.edgeStarts.push_back(edge.p0);
         edgeData.edgeEnds.push_back(edge.p1);
-        edgeData.sourceObjectOffsets.push_back(static_cast<int>(edgeData.sourceObjects.size()));
-        edgeData.sourceObjectCounts.push_back(static_cast<int>(edge.sourceObjects.size()));
-
-        for (const int sourceObject : edge.sourceObjects) {
-            edgeData.sourceObjects.push_back(sourceObject);
-        }
+        edgeData.sourceObjectIds.push_back(edge.sourceObject);
     }
 
     return edgeData;

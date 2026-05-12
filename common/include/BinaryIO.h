@@ -9,7 +9,7 @@ namespace RaySpace {
 namespace IO {
 
 constexpr uint32_t BINARY_FILE_MAGIC = 0x52334442; // "R3DB"
-constexpr uint32_t BINARY_FILE_VERSION = 3;
+constexpr uint32_t BINARY_FILE_VERSION = 4;
 
 struct FileHeader {
     uint32_t magic;
@@ -18,7 +18,6 @@ struct FileHeader {
     uint64_t numIndices;
     uint64_t numMappings;
     uint64_t numEdges;
-    uint64_t numEdgeSourceObjects;
     uint64_t totalTriangles;
     uint8_t hasGrid;
     uint8_t hasEdges;
@@ -44,7 +43,6 @@ inline bool writeBinaryFile(const std::string& filename, const GeometryData& geo
     header.numIndices = geometry.indices.size();
     header.numMappings = geometry.triangleToObject.size();
     header.numEdges = geometry.edges.edgeStarts.size();
-    header.numEdgeSourceObjects = geometry.edges.sourceObjects.size();
     header.totalTriangles = geometry.totalTriangles;
     header.hasGrid = geometry.grid.hasGrid ? 1 : 0;
     header.hasEdges = geometry.edges.hasEdges() ? 1 : 0;
@@ -64,11 +62,7 @@ inline bool writeBinaryFile(const std::string& filename, const GeometryData& geo
         if (header.numEdges > 0) {
             out.write(reinterpret_cast<const char*>(geometry.edges.edgeStarts.data()), header.numEdges * sizeof(float3));
             out.write(reinterpret_cast<const char*>(geometry.edges.edgeEnds.data()), header.numEdges * sizeof(float3));
-            out.write(reinterpret_cast<const char*>(geometry.edges.sourceObjectOffsets.data()), header.numEdges * sizeof(int));
-            out.write(reinterpret_cast<const char*>(geometry.edges.sourceObjectCounts.data()), header.numEdges * sizeof(int));
-        }
-        if (header.numEdgeSourceObjects > 0) {
-            out.write(reinterpret_cast<const char*>(geometry.edges.sourceObjects.data()), header.numEdgeSourceObjects * sizeof(int));
+            out.write(reinterpret_cast<const char*>(geometry.edges.sourceObjectIds.data()), header.numEdges * sizeof(int));
         }
     }
 
@@ -129,19 +123,12 @@ inline GeometryData readBinaryFile(const std::string& filename) {
     if (header.hasEdges) {
         geometry.edges.edgeStarts.resize(header.numEdges);
         geometry.edges.edgeEnds.resize(header.numEdges);
-        geometry.edges.sourceObjectOffsets.resize(header.numEdges);
-        geometry.edges.sourceObjectCounts.resize(header.numEdges);
-        geometry.edges.sourceObjects.resize(header.numEdgeSourceObjects);
+        geometry.edges.sourceObjectIds.resize(header.numEdges);
 
         if (header.numEdges > 0) {
             in.read(reinterpret_cast<char*>(geometry.edges.edgeStarts.data()), header.numEdges * sizeof(float3));
             in.read(reinterpret_cast<char*>(geometry.edges.edgeEnds.data()), header.numEdges * sizeof(float3));
-            in.read(reinterpret_cast<char*>(geometry.edges.sourceObjectOffsets.data()), header.numEdges * sizeof(int));
-            in.read(reinterpret_cast<char*>(geometry.edges.sourceObjectCounts.data()), header.numEdges * sizeof(int));
-        }
-
-        if (header.numEdgeSourceObjects > 0) {
-            in.read(reinterpret_cast<char*>(geometry.edges.sourceObjects.data()), header.numEdgeSourceObjects * sizeof(int));
+            in.read(reinterpret_cast<char*>(geometry.edges.sourceObjectIds.data()), header.numEdges * sizeof(int));
         }
     }
 

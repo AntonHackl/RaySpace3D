@@ -11,9 +11,7 @@ struct MeshOverlapEdgesLaunchParams {
     // Mesh1 edge data
     float3* edge_starts;
     float3* edge_ends;
-    int* edge_source_object_counts;
-    int* edge_source_objects;      // Flattened array of object IDs
-    int* edge_source_object_offsets;
+    int* edge_source_object_ids;
     int num_edges;
     
     // Mesh2 acceleration structure

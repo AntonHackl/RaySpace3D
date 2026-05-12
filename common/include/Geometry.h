@@ -26,15 +26,12 @@ struct GridData {
 struct EdgeData {
     std::vector<float3, PinnedAllocator<float3>> edgeStarts;
     std::vector<float3, PinnedAllocator<float3>> edgeEnds;
-    std::vector<int, PinnedAllocator<int>> sourceObjects;
-    std::vector<int, PinnedAllocator<int>> sourceObjectOffsets;
-    std::vector<int, PinnedAllocator<int>> sourceObjectCounts;
+    std::vector<int, PinnedAllocator<int>> sourceObjectIds;
 
     bool hasEdges() const {
         return !edgeStarts.empty() &&
                edgeStarts.size() == edgeEnds.size() &&
-               edgeStarts.size() == sourceObjectOffsets.size() &&
-               edgeStarts.size() == sourceObjectCounts.size();
+               edgeStarts.size() == sourceObjectIds.size();
     }
 
     size_t numEdges() const {

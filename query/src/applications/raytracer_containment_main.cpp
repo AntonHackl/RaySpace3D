@@ -435,9 +435,7 @@ int main(int argc, char* argv[]) {
         // Phase 1a: B edges → A
         params.src_edge_starts             = bEdgeData.d_edge_starts;
         params.src_edge_ends               = bEdgeData.d_edge_ends;
-        params.src_edge_source_object_counts = bEdgeData.d_source_object_counts;
-        params.src_edge_source_objects       = bEdgeData.d_source_objects;
-        params.src_edge_source_object_offsets = bEdgeData.d_source_object_offsets;
+        params.src_edge_source_object_ids    = bEdgeData.d_source_object_ids;
         params.src_num_edges               = bNumEdges;
         params.target_handle           = aAS.getHandle();
         params.target_triangle_to_object = aUploader.getTriangleToObject();
@@ -471,9 +469,7 @@ int main(int argc, char* argv[]) {
         // Phase 1b: A edges → B
         params.src_edge_starts             = aEdgeData.d_edge_starts;
         params.src_edge_ends               = aEdgeData.d_edge_ends;
-        params.src_edge_source_object_counts = aEdgeData.d_source_object_counts;
-        params.src_edge_source_objects       = aEdgeData.d_source_objects;
-        params.src_edge_source_object_offsets = aEdgeData.d_source_object_offsets;
+        params.src_edge_source_object_ids    = aEdgeData.d_source_object_ids;
         params.src_num_edges               = aNumEdges;
         params.target_handle           = bAS.getHandle();
         params.target_triangle_to_object = bUploader.getTriangleToObject();

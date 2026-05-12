@@ -296,9 +296,7 @@ extern "C" __global__ void __raygen__mesh_overlap() {
 
     const float3 edgeStart = mesh_intersection_params.edge_starts[edgeIdx];
     const float3 edgeEnd = mesh_intersection_params.edge_ends[edgeIdx];
-    const int numSourceObjects = mesh_intersection_params.edge_source_object_counts[edgeIdx];
-    const int sourceOffset = mesh_intersection_params.edge_source_object_offsets[edgeIdx];
-    const int* sourceObjectIds = &mesh_intersection_params.edge_source_objects[sourceOffset];
+    const int sourceObjectId = mesh_intersection_params.edge_source_object_ids[edgeIdx];
     
     const float epsilon = 1e-6f;
     int totalHits = 0;
@@ -314,18 +312,15 @@ extern "C" __global__ void __raygen__mesh_overlap() {
 
     if (edgeLength >= epsilon) {
         float3 normalizedDir = normalize3f(edgeDir);
-        for (int i = 0; i < numSourceObjects; ++i) {
-            const int sourceObjectId = sourceObjectIds[i];
-            int hitsFound = trace_edge_multi_hits(
-                edgeStart,
-                normalizedDir,
-                edgeLength,
-                sourceObjectId,
-                mesh_intersection_params.swap_result_ids != 0,
-                writeCursor,
-                epsilon);
-            totalHits += hitsFound;
-        }
+        int hitsFound = trace_edge_multi_hits(
+            edgeStart,
+            normalizedDir,
+            edgeLength,
+            sourceObjectId,
+            mesh_intersection_params.swap_result_ids != 0,
+            writeCursor,
+            epsilon);
+        totalHits += hitsFound;
     }
 
     if (!mesh_intersection_params.use_hash_table && mesh_intersection_params.pass == 1) {

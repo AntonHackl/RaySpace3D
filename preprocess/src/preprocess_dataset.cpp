@@ -335,8 +335,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: Edge extraction failed. No valid edge payload generated." << std::endl;
         return 1;
     }
-    std::cout << "Extracted " << geometry.edges.numEdges() << " unique edges with "
-              << geometry.edges.sourceObjects.size() << " flattened source-object entries" << std::endl;
+    std::cout << "Extracted " << geometry.edges.numEdges() << " unique edges (per object)" << std::endl;
 
     // Write geometry data
     timer.next("Writing Geometry Data");

@@ -8,9 +8,7 @@ struct MeshContainmentLaunchParams {
     // Source precomputed edges (Phase 1 rays)
     float3* src_edge_starts;
     float3* src_edge_ends;
-    int*    src_edge_source_object_counts;
-    int*    src_edge_source_objects;
-    int*    src_edge_source_object_offsets;
+    int*    src_edge_source_object_ids;
     int     src_num_edges;
 
     // Target mesh acceleration structure (to trace against)

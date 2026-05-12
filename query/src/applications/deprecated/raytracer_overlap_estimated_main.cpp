@@ -409,9 +409,7 @@ int main(int argc, char* argv[]) {
     MeshOverlapEdgesLaunchParams edgesParams1 = {};
     edgesParams1.edge_starts = mesh1EdgeData.d_edge_starts;
     edgesParams1.edge_ends = mesh1EdgeData.d_edge_ends;
-    edgesParams1.edge_source_object_counts = mesh1EdgeData.d_source_object_counts;
-    edgesParams1.edge_source_objects = mesh1EdgeData.d_source_objects;
-    edgesParams1.edge_source_object_offsets = mesh1EdgeData.d_source_object_offsets;
+    edgesParams1.edge_source_object_ids = mesh1EdgeData.d_source_object_ids;
     edgesParams1.num_edges = mesh1NumEdges;
     edgesParams1.mesh2_handle = mesh2AS.getHandle();
     edgesParams1.mesh2_vertices = mesh2Uploader.getVertices();
@@ -423,9 +421,7 @@ int main(int argc, char* argv[]) {
     MeshOverlapEdgesLaunchParams edgesParams2 = {};
     edgesParams2.edge_starts = mesh2EdgeData.d_edge_starts;
     edgesParams2.edge_ends = mesh2EdgeData.d_edge_ends;
-    edgesParams2.edge_source_object_counts = mesh2EdgeData.d_source_object_counts;
-    edgesParams2.edge_source_objects = mesh2EdgeData.d_source_objects;
-    edgesParams2.edge_source_object_offsets = mesh2EdgeData.d_source_object_offsets;
+    edgesParams2.edge_source_object_ids = mesh2EdgeData.d_source_object_ids;
     edgesParams2.num_edges = mesh2NumEdges;
     edgesParams2.mesh2_handle = mesh1AS.getHandle();
     edgesParams2.mesh2_vertices = mesh1Uploader.getVertices();
