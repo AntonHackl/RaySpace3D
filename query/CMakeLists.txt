@@ -99,7 +99,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # CUDA Sources
 set(CUDA_DIR ${SRC_DIR}/cuda)
-set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap.cu ${CUDA_DIR}/mesh_overlap_edges.cu ${CUDA_DIR}/mesh_intersection.cu ${CUDA_DIR}/mesh_intersection_anyhit.cu)
+set(CUDA_SOURCES ${CUDA_DIR}/raytracing.cu ${CUDA_DIR}/mesh_overlap_edges.cu ${CUDA_DIR}/mesh_intersection.cu ${CUDA_DIR}/mesh_intersection_anyhit.cu)
 set(RESULT_COMPACTION_SOURCE ${CUDA_DIR}/result_compaction.cu)
 set(MESH_QUERY_DEDUP_SOURCE ${CUDA_DIR}/mesh_query_deduplication.cu)
 set(SCAN_UTILS_SOURCE ${CUDA_DIR}/scan_utils.cu)
@@ -135,7 +135,6 @@ set(RAYTRACING_SOURCES
     ${RAYTRACING_DIR}/RayLauncher.cpp
     ${RAYTRACING_DIR}/ResultProcessor.cpp
     ${RAYTRACING_DIR}/FilterRefine.cpp
-    ${RAYTRACING_DIR}/MeshOverlapLauncher.cpp
     ${RAYTRACING_DIR}/MeshOverlapEdgesLauncher.cpp
     ${RAYTRACING_DIR}/MeshIntersectionLauncher.cpp
     ${RAYTRACING_DIR}/MeshContainmentLauncher.cpp)
@@ -327,7 +326,6 @@ set_target_properties(raytracer_containment PROPERTIES RUNTIME_OUTPUT_DIRECTORY 
 # -----------------------------------------------------------------------
 
 set(PTX_FILE "${PTX_OUTPUT_DIR}/raytracing${OPTIX_MODULE_EXTENSION}")
-set(MESH_OVERLAP_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}")
 set(MESH_OVERLAP_EDGES_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_overlap_edges${OPTIX_MODULE_EXTENSION}")
 set(MESH_INTERSECTION_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_intersection${OPTIX_MODULE_EXTENSION}")
 set(MESH_INTERSECTION_ANYHIT_PTX_FILE "${PTX_OUTPUT_DIR}/mesh_intersection_anyhit${OPTIX_MODULE_EXTENSION}")
@@ -342,9 +340,6 @@ add_custom_target(copy_ptx ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${PTX_FILE}"
         "${RUNTIME_PTX_DIR}/raytracing${OPTIX_MODULE_EXTENSION}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MESH_OVERLAP_PTX_FILE}"
-        "${RUNTIME_PTX_DIR}/mesh_overlap${OPTIX_MODULE_EXTENSION}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MESH_OVERLAP_EDGES_PTX_FILE}"
         "${RUNTIME_PTX_DIR}/mesh_overlap_edges${OPTIX_MODULE_EXTENSION}"
@@ -404,18 +399,18 @@ add_custom_command(TARGET raytracer_overlap_estimated POST_BUILD
 
 add_custom_command(TARGET raytracer_overlap_estimated POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${MESH_OVERLAP_PTX_FILE}"
-    "$<TARGET_FILE_DIR:raytracer_overlap_estimated>/mesh_overlap${OPTIX_MODULE_EXTENSION}"
-    COMMENT "Copying mesh_overlap.ptx...")
+    "${MESH_OVERLAP_EDGES_PTX_FILE}"
+    "$<TARGET_FILE_DIR:raytracer_overlap_estimated>/mesh_overlap_edges${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying mesh_overlap_edges.ptx...")
 
 # Overlap Direct Estimated
 add_dependencies(raytracer_overlap_direct_estimation copy_ptx)
 
 add_custom_command(TARGET raytracer_overlap_direct_estimation POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${MESH_OVERLAP_PTX_FILE}"
-    "$<TARGET_FILE_DIR:raytracer_overlap_direct_estimation>/mesh_overlap${OPTIX_MODULE_EXTENSION}"
-    COMMENT "Copying mesh_overlap.ptx...")
+    "${MESH_OVERLAP_EDGES_PTX_FILE}"
+    "$<TARGET_FILE_DIR:raytracer_overlap_direct_estimation>/mesh_overlap_edges${OPTIX_MODULE_EXTENSION}"
+    COMMENT "Copying mesh_overlap_edges.ptx...")
 
 # Containment
 add_dependencies(raytracer_containment copy_ptx)

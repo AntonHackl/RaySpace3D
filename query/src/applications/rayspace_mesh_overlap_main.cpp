@@ -19,12 +19,10 @@
 #include "GeometryUploader.h"
 #include "Geometry.h"
 #include "GeometryIO.h"
-#include "../cuda/mesh_overlap.h"
 #include "../cuda/mesh_query_deduplication.h"
 #include "scan_utils.h"
 #include "common.h"
 #include "../optix/OptixHelpers.h"
-#include "../raytracing/MeshOverlapLauncher.h"
 #include "../raytracing/MeshOverlapEdgesLauncher.h"
 #include "../geometry/PrecomputedEdgeData.h"
 #include "../timer.h"
@@ -36,9 +34,7 @@ struct QueryResults {
     long long numUnique;
 };
 
-// Execute the overlap query using edges (optimized for watertight meshes)
-// Mesh1 edges are used for rays, targeting Mesh2's acceleration structure
-// Mesh2 uses traditional triangle-based approach for ray casting
+// Execute the overlap query using precomputed unique edges in both directions.
 QueryResults executeTwoPassQueryEdgesOptimized(
     MeshOverlapEdgesLauncher& edgesLauncher,
     MeshOverlapEdgesLaunchParams& edgesParams1,
@@ -136,118 +132,6 @@ QueryResults executeTwoPassQueryEdgesOptimized(
     CUDA_CHECK(cudaFree(d_collision_offsets2));
     
     // Deduplicate
-    auto t_dedup_0 = std::chrono::high_resolution_clock::now();
-    long long numUnique = merge_and_deduplicate_pairs_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
-    auto t_dedup_1 = std::chrono::high_resolution_clock::now();
-    if (timer) {
-        timer->addMeasurement(
-            "gpu deduplication",
-            std::chrono::duration_cast<std::chrono::microseconds>(t_dedup_1 - t_dedup_0).count()
-        );
-    }
-    
-    if (verbose) {
-        std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;
-    }
-    
-    return {d_merged_results, numUnique};
-}
-
-QueryResults executeTwoPassQuery(
-    MeshOverlapLauncher& overlapLauncher,
-    MeshOverlapLaunchParams& params1,
-    MeshOverlapLaunchParams& params2,
-    int mesh1NumTriangles,
-    int mesh2NumTriangles,
-    PerformanceTimer* timer = nullptr,
-    bool verbose = true
-) {
-    // PASS 1: Count collisions
-    int* d_collision_counts1 = nullptr;
-    int* d_collision_counts2 = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_collision_counts1, (size_t)mesh1NumTriangles * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_collision_counts2, (size_t)mesh2NumTriangles * sizeof(int)));
-    
-    params1.collision_counts = d_collision_counts1;
-    params1.pass = 1;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    if (timer) {
-        timer->addMeasurement(
-            "Raytrace_Mesh1ToMesh2_Pass1",
-            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
-        );
-    }
-    
-    params2.collision_counts = d_collision_counts2;
-    params2.pass = 1;
-    t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
-    t1 = std::chrono::high_resolution_clock::now();
-    if (timer) {
-        timer->addMeasurement(
-            "Raytrace_Mesh2ToMesh1_Pass1",
-            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
-        );
-    }
-    
-    // Scan counts
-    long long* d_collision_offsets1 = nullptr;
-    long long* d_collision_offsets2 = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_collision_offsets1, (size_t)mesh1NumTriangles * sizeof(long long)));
-    CUDA_CHECK(cudaMalloc(&d_collision_offsets2, (size_t)mesh2NumTriangles * sizeof(long long)));
-    
-    long long total_results1 = exclusive_scan_gpu(d_collision_counts1, d_collision_offsets1, mesh1NumTriangles);
-    long long total_results2 = exclusive_scan_gpu(d_collision_counts2, d_collision_offsets2, mesh2NumTriangles);
-    
-    // Free counts - no longer needed after scan
-    CUDA_CHECK(cudaFree(d_collision_counts1));
-    CUDA_CHECK(cudaFree(d_collision_counts2));
-    
-    if (verbose) {
-        std::cout << "Pass 1: Found " << total_results1 << " + " << total_results2 
-                  << " = " << (total_results1 + total_results2) << " potential overlaps." << std::endl;
-    }
-    
-    // PASS 2: Store results into a single merged buffer
-    long long total_all = total_results1 + total_results2;
-    MeshQueryResult* d_merged_results = nullptr;
-    if (total_all > 0) {
-        CUDA_CHECK(cudaMalloc(&d_merged_results, (size_t)total_all * sizeof(MeshQueryResult)));
-    }
-    
-    params1.collision_offsets = d_collision_offsets1;
-    params1.results = d_merged_results;
-    params1.pass = 2;
-    t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh1ToMesh2(params1, mesh1NumTriangles);
-    t1 = std::chrono::high_resolution_clock::now();
-    if (timer) {
-        timer->addMeasurement(
-            "Raytrace_Mesh1ToMesh2_Pass2",
-            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
-        );
-    }
-    
-    // Mesh2 results go right after Mesh1 results in the same buffer
-    params2.collision_offsets = d_collision_offsets2;
-    params2.results = (d_merged_results ? d_merged_results + total_results1 : nullptr);
-    params2.pass = 2;
-    t0 = std::chrono::high_resolution_clock::now();
-    overlapLauncher.launchMesh2ToMesh1(params2, mesh2NumTriangles);
-    t1 = std::chrono::high_resolution_clock::now();
-    if (timer) {
-        timer->addMeasurement(
-            "Raytrace_Mesh2ToMesh1_Pass2",
-            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()
-        );
-    }
-    
-    CUDA_CHECK(cudaFree(d_collision_offsets1));
-    CUDA_CHECK(cudaFree(d_collision_offsets2));
-    
-    // Deduplicate (auto-batches if GPU memory is tight)
     auto t_dedup_0 = std::chrono::high_resolution_clock::now();
     long long numUnique = merge_and_deduplicate_pairs_gpu(nullptr, total_all, nullptr, 0, d_merged_results);
     auto t_dedup_1 = std::chrono::high_resolution_clock::now();
@@ -506,4 +390,3 @@ int main(int argc, char* argv[]) {
     timer.finish(outputJsonPath);
     return 0;
 }
-

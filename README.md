@@ -147,7 +147,7 @@ Casts one ray per query point against the mesh acceleration structure. A point i
 Two-phase approach: first traces rays against the mesh's axis-aligned bounding box to eliminate points that are clearly outside, then runs the exact containment test only on the surviving candidates.
 
 ### Mesh Overlap (`raytracer_mesh_overlap`)
-For each triangle edge in Mesh A, casts a ray against Mesh B's acceleration structure (and vice versa). Any intersection identifies a pair of overlapping objects. Results are deduplicated using an on-GPU hash table, then a sort-based deduplication step merges the bidirectional results.
+Uses precomputed unique edges from Mesh A and Mesh B, casts those edge rays against the opposite acceleration structure, and reports any intersecting object pairs. Results are deduplicated using an on-GPU hash table, then a sort-based deduplication step merges the bidirectional results.
 
 ### Mesh Intersection (`raytracer_mesh_intersection`)
 Extends mesh overlap with a containment fallback: if an object in Mesh A has no edge intersections with Mesh B, it may still be fully contained. The algorithm tests one representative vertex per non-intersecting object to check containment via ray-casting parity.

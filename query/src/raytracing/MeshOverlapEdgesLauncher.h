@@ -2,9 +2,8 @@
 
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
-#include "../cuda/mesh_overlap.h"
-#include "../geometry/PrecomputedEdgeData.h"
 #include "../optix/OptixHelpers.h"
+#include "../../../common/include/common.h"
 #include <optix.h>
 
 // Extended launch parameters for edge-based processing

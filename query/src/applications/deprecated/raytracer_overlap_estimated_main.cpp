@@ -19,7 +19,6 @@
 #include "GeometryUploader.h"
 #include "Geometry.h"
 #include "GeometryIO.h"
-#include "../../cuda/mesh_overlap.h"
 #include "../../cuda/mesh_query_deduplication.h"
 #include "scan_utils.h"
 #include "common.h"
