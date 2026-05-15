@@ -32,6 +32,8 @@
 struct QueryResults {
     MeshQueryResult* d_merged_results;
     long long numUnique;
+    unsigned long long resultBufferCapacity;
+    unsigned long long resultBufferAllocatedBytes;
 };
 
 // Execute the overlap query using precomputed unique edges in both directions.
@@ -146,7 +148,12 @@ QueryResults executeTwoPassQueryEdgesOptimized(
         std::cout << "Deduplication: Found " << numUnique << " unique object pairs." << std::endl;
     }
     
-    return {d_merged_results, numUnique};
+    unsigned long long resultBufferCapacity = total_edge_results + total_mesh2_results;
+    // We allocate total_all for d_merged_results.
+    // Total allocated bytes for result buffers in this pass:
+    unsigned long long resultBufferAllocatedBytes = (total_edge_results + total_mesh2_results) * sizeof(MeshQueryResult);
+    
+    return {d_merged_results, numUnique, resultBufferCapacity, resultBufferAllocatedBytes};
 }
 
 class MeshOverlapCliOptions : public BenchmarkMeshPairCliOptions {
@@ -366,6 +373,10 @@ int main(int argc, char* argv[]) {
     std::cout << "Mesh2 objects: " << mesh2NumObjects << std::endl;
 
     std::cout << "Unique object pairs: " << numUnique << std::endl;
+    
+    std::cout << "Result Buffer Capacity: " << queryResults.resultBufferCapacity << std::endl;
+    std::cout << "Result Buffer Allocated Bytes: " << queryResults.resultBufferAllocatedBytes << std::endl;
+    std::cout << "Result Buffer Used Bytes: " << (static_cast<unsigned long long>(numUnique) * sizeof(MeshQueryResult)) << std::endl;
     
     if (exportResults) {
         std::cout << "Exporting results to mesh_overlap_results.csv" << std::endl;
