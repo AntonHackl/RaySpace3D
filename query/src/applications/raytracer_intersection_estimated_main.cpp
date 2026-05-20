@@ -210,6 +210,122 @@ float calculateGlobalAvgVolRatio(const std::vector<SparseGridEntry>& sparseCells
     return (float)(totalRatio / totalCount);
 }
 
+static long long estimateIntersectionPairs(
+    const GeometryData& mesh1,
+    const GeometryData& mesh2,
+    float epsilon,
+    float gamma,
+    bool verbose
+) {
+    long long estimatedPairs = 0;
+
+    if (mesh1.grid.hasGrid && mesh2.grid.hasGrid) {
+        if (std::abs(mesh1.grid.cellSize - mesh2.grid.cellSize) > 1e-5f) {
+            if (verbose) {
+                std::cerr << "Warning: Grid cell sizes mismatch (Mesh1: " << mesh1.grid.cellSize
+                          << ", Mesh2: " << mesh2.grid.cellSize << "). Estimation may be invalid." << std::endl;
+            }
+        }
+
+        float cellVolume = mesh1.grid.cellSize * mesh1.grid.cellSize * mesh1.grid.cellSize;
+
+        struct Int3Hash {
+            size_t operator()(const int3& k) const {
+                return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1) ^ (std::hash<int>()(k.z) << 2);
+            }
+        };
+        struct Int3Equal {
+            bool operator()(const int3& a, const int3& b) const {
+                return a.x == b.x && a.y == b.y && a.z == b.z;
+            }
+        };
+
+        std::unordered_map<int3, GridCell, Int3Hash, Int3Equal> mapA;
+        for (const auto& entry : mesh1.grid.sparseCells) {
+            mapA[entry.index] = entry.stats;
+        }
+
+        std::vector<GridCell> matchedA;
+        std::vector<GridCell> matchedB;
+
+        for (const auto& entry : mesh2.grid.sparseCells) {
+            auto it = mapA.find(entry.index);
+            if (it != mapA.end()) {
+                matchedA.push_back(it->second);
+                matchedB.push_back(entry.stats);
+            }
+        }
+
+        int numMatchedCells = matchedA.size();
+
+        float estimatedPairsFloat = 0.0f;
+        if (numMatchedCells > 0) {
+            estimatedPairsFloat = estimateIntersectionSelectivity(
+                matchedA.data(),
+                matchedB.data(),
+                numMatchedCells,
+                cellVolume,
+                epsilon,
+                gamma
+            );
+        }
+
+        float avgSize1 = calculateGlobalAvgSize(mesh1.grid.sparseCells);
+        float avgSize2 = calculateGlobalAvgSize(mesh2.grid.sparseCells);
+        float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.sparseCells);
+        float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.sparseCells);
+
+        float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
+        float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
+
+        float combinedSize = effectiveSize1 + effectiveSize2;
+        float minkowskiVol = combinedSize * combinedSize * combinedSize;
+
+        if (cellVolume < 1e-9f) cellVolume = 1e-9f;
+
+        float alpha = minkowskiVol / cellVolume;
+        if (alpha < 1.0f) alpha = 1.0f;
+
+        estimatedPairs = (long long)(estimatedPairsFloat / alpha);
+
+        if (verbose) {
+            std::cout << "\n=== Selectivity Estimation ===" << std::endl;
+            std::cout << "Matched Sparse Cells:      " << numMatchedCells << std::endl;
+            std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
+            std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
+            std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
+            std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
+            std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
+            std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
+            std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
+            std::cout << "Replication Factor (alpha):" << alpha << std::endl;
+            std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+            std::cout << "==============================\n" << std::endl;
+        }
+    } else if (verbose) {
+        std::cout << "Skipping estimation: Grid data not found in one or both datasets." << std::endl;
+        std::cout << "Run preprocess_dataset with --generate-grid to enable estimation." << std::endl;
+    }
+
+    return estimatedPairs;
+}
+
+static int chooseIntersectionHashTableSize(long long estimatedPairs, float hashLoadFactor) {
+    int hashTableSize = 16777216;
+    if (estimatedPairs > 0) {
+        unsigned long long target = (unsigned long long)(estimatedPairs / hashLoadFactor);
+        if (target < 1024) target = 1024;
+
+        // Cap to reasonable int size for hash table param
+        if (target > 1073741824ULL) target = 1073741824ULL;
+        hashTableSize = (int)target;
+        if (hashTableSize % 2 == 0) {
+            hashTableSize += 1;
+        }
+    }
+    return hashTableSize;
+}
+
 class IntersectionEstimatedCliOptions : public BenchmarkMeshPairCliOptions {
 public:
     IntersectionEstimatedCliOptions() : BenchmarkMeshPairCliOptions("estimated_intersection_timing.json") {}
@@ -386,119 +502,22 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    if (warmupRuns > 0) {
+        for (int warmup = 0; warmup < warmupRuns; ++warmup) {
+            (void)estimateIntersectionPairs(mesh1, mesh2, epsilon, gamma, false);
+        }
+    }
+
     // --- ESTIMATION PHASE ---
     timer.next("Selectivity Estimation");
-    
-    long long estimatedPairs = 0;
-
-    if (mesh1.grid.hasGrid && mesh2.grid.hasGrid) {
-        // Validation for mismatch
-        if (std::abs(mesh1.grid.cellSize - mesh2.grid.cellSize) > 1e-5f) {
-            std::cerr << "Warning: Grid cell sizes mismatch (Mesh1: " << mesh1.grid.cellSize 
-                      << ", Mesh2: " << mesh2.grid.cellSize << "). Estimation may be invalid." << std::endl;
-        }
-
-        float cellVolume = mesh1.grid.cellSize * mesh1.grid.cellSize * mesh1.grid.cellSize;
-
-        struct Int3Hash {
-            size_t operator()(const int3& k) const {
-                return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1) ^ (std::hash<int>()(k.z) << 2);
-            }
-        };
-        struct Int3Equal {
-            bool operator()(const int3& a, const int3& b) const {
-                return a.x == b.x && a.y == b.y && a.z == b.z;
-            }
-        };
-
-        std::unordered_map<int3, GridCell, Int3Hash, Int3Equal> mapA;
-        for (const auto& entry : mesh1.grid.sparseCells) {
-            mapA[entry.index] = entry.stats;
-        }
-
-        std::vector<GridCell> matchedA;
-        std::vector<GridCell> matchedB;
-
-        for (const auto& entry : mesh2.grid.sparseCells) {
-            auto it = mapA.find(entry.index);
-            if (it != mapA.end()) {
-                matchedA.push_back(it->second);
-                matchedB.push_back(entry.stats);
-            }
-        }
-        
-        int numMatchedCells = matchedA.size();
-
-        float estimatedPairsFloat = 0.0f;
-        if (numMatchedCells > 0) {
-            estimatedPairsFloat = estimateIntersectionSelectivity(
-                matchedA.data(), 
-                matchedB.data(), 
-                numMatchedCells, 
-                cellVolume,
-                epsilon,
-                gamma
-            );
-        }
-            
-        // --- Normalization (Replication Correction) ---
-        float avgSize1 = calculateGlobalAvgSize(mesh1.grid.sparseCells);
-        float avgSize2 = calculateGlobalAvgSize(mesh2.grid.sparseCells);
-        float avgVolRatio1 = calculateGlobalAvgVolRatio(mesh1.grid.sparseCells);
-        float avgVolRatio2 = calculateGlobalAvgVolRatio(mesh2.grid.sparseCells);
-        
-        // Scale sizes by cube root of VolRatio to get "effective" linear dimension
-        // For sparse/elongated objects, this reduces the effective size significantly
-        float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
-        float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
-        
-        // Calculate alpha: Volume of Minkowski Sum in grid cell units
-        // Using effective sizes to account for object shapes
-        float combinedSize = effectiveSize1 + effectiveSize2;
-        float minkowskiVol = combinedSize * combinedSize * combinedSize;
-        
-        if (cellVolume < 1e-9f) cellVolume = 1e-9f;
-        
-        float alpha = minkowskiVol / cellVolume;
-        if (alpha < 1.0f) alpha = 1.0f; // Cannot be less than 1 cell
-        
-        estimatedPairs = (long long)(estimatedPairsFloat / alpha);
-
-        std::cout << "\n=== Selectivity Estimation ===" << std::endl;
-        std::cout << "Matched Sparse Cells:      " << numMatchedCells << std::endl;
-        std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
-        std::cout << "Avg Object Size (Mesh1):   " << avgSize1 << std::endl;
-        std::cout << "Avg Object Size (Mesh2):   " << avgSize2 << std::endl;
-        std::cout << "Avg VolRatio (Mesh1):      " << avgVolRatio1 << std::endl;
-        std::cout << "Avg VolRatio (Mesh2):      " << avgVolRatio2 << std::endl;
-        std::cout << "Effective Size (Mesh1):    " << effectiveSize1 << std::endl;
-        std::cout << "Effective Size (Mesh2):    " << effectiveSize2 << std::endl;
-        std::cout << "Replication Factor (alpha):" << alpha << std::endl;
-        std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
-        std::cout << "==============================\n" << std::endl;
-
-    } else {
-        std::cout << "Skipping estimation: Grid data not found in one or both datasets." << std::endl;
-        std::cout << "Run preprocess_dataset with --generate-grid to enable estimation." << std::endl;
-    }
+    long long estimatedPairs = estimateIntersectionPairs(mesh1, mesh2, epsilon, gamma, true);
 
     if (estimateOnly) {
         timer.finish(outputJsonPath);
         return 0;
     }
 
-    int hash_table_size = 16777216;
-    if (estimatedPairs > 0) {
-        unsigned long long target = (unsigned long long)(estimatedPairs / hashLoadFactor);
-        if (target < 1024) target = 1024;
-        
-        // Cap to reasonable int size for hash table param
-        if (target > 1073741824ULL) target = 1073741824ULL;
-        hash_table_size = (int)target;
-        if (hash_table_size % 2 == 0) {
-            hash_table_size += 1;
-        }
-    }
+    int hash_table_size = chooseIntersectionHashTableSize(estimatedPairs, hashLoadFactor);
 
     std::cout << "\n=== Query Configuration ===" << std::endl;
     std::cout << "Estimated Pairs:    " << estimatedPairs << std::endl;

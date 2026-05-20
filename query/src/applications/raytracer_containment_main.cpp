@@ -63,6 +63,93 @@ float calculateGlobalAvgVolRatio(const std::vector<SparseGridEntry>& sparseCells
     return (float)(totalRatio / totalCount);
 }
 
+static long long estimateContainmentPairs(
+    const GeometryData& meshAData,
+    const GeometryData& meshBData,
+    float epsilon,
+    float gamma,
+    bool verbose
+) {
+    if (!meshAData.grid.hasGrid || !meshBData.grid.hasGrid) {
+        return 0;
+    }
+
+    float cellVolume = meshAData.grid.cellSize * meshAData.grid.cellSize * meshAData.grid.cellSize;
+
+    struct Int3Hash {
+        size_t operator()(const int3& k) const {
+            return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1) ^ (std::hash<int>()(k.z) << 2);
+        }
+    };
+    struct Int3Equal {
+        bool operator()(const int3& a, const int3& b) const {
+            return a.x == b.x && a.y == b.y && a.z == b.z;
+        }
+    };
+
+    std::unordered_map<int3, GridCell, Int3Hash, Int3Equal> mapA;
+    for (const auto& entry : meshAData.grid.sparseCells) {
+        mapA[entry.index] = entry.stats;
+    }
+
+    std::vector<GridCell> matchedA;
+    std::vector<GridCell> matchedB;
+
+    for (const auto& entry : meshBData.grid.sparseCells) {
+        auto it = mapA.find(entry.index);
+        if (it != mapA.end()) {
+            matchedA.push_back(it->second);
+            matchedB.push_back(entry.stats);
+        }
+    }
+
+    int numMatchedCells = (int)matchedA.size();
+    float estimatedPairsFloat = 0.0f;
+    if (numMatchedCells > 0) {
+        estimatedPairsFloat = estimateIntersectionSelectivity(
+            matchedA.data(), matchedB.data(), numMatchedCells,
+            cellVolume, epsilon, gamma);
+    }
+
+    float avgSize1 = calculateGlobalAvgSize(meshAData.grid.sparseCells);
+    float avgSize2 = calculateGlobalAvgSize(meshBData.grid.sparseCells);
+    float avgVolRatio1 = calculateGlobalAvgVolRatio(meshAData.grid.sparseCells);
+    float avgVolRatio2 = calculateGlobalAvgVolRatio(meshBData.grid.sparseCells);
+    float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
+    float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
+    float combinedSize = effectiveSize1 + effectiveSize2;
+    float minkowskiVol = combinedSize * combinedSize * combinedSize;
+    if (cellVolume < 1e-9f) cellVolume = 1e-9f;
+    float alpha = minkowskiVol / cellVolume;
+    if (alpha < 1.0f) alpha = 1.0f;
+
+    const long long estimatedPairs = (long long)(estimatedPairsFloat / alpha);
+
+    if (verbose) {
+        std::cout << "\n=== Containment Selectivity Estimation ===" << std::endl;
+        std::cout << "Matched Sparse Cells:      " << numMatchedCells << std::endl;
+        std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
+        std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+        std::cout << "==========================================\n" << std::endl;
+    }
+
+    return estimatedPairs;
+}
+
+static int chooseContainmentHashTableSize(long long estimatedPairs, float hashLoadFactor) {
+    if (estimatedPairs <= 0) {
+        return 16777216;
+    }
+
+    unsigned long long target = (unsigned long long)(estimatedPairs / hashLoadFactor);
+    if (target < 1024) target = 1024;
+    if (target > 536870912ULL) target = 536870912ULL; // Cap at 512M slots (~4GB each)
+
+    int hashTableSize = (int)target;
+    if (hashTableSize % 2 == 0) hashTableSize++;
+    return hashTableSize;
+}
+
 // ---------------------------------------------------------------------
 // Containment query
 //
@@ -279,24 +366,6 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_bFirstVertices, bFirstVertices.data(),
                           numBObjects * sizeof(float3), cudaMemcpyHostToDevice));
 
-    std::vector<float3> aFirstVertices(numAObjects);
-    {
-        std::vector<bool> seen(numAObjects, false);
-        for (int tri = 0; tri < aNumTriangles; ++tri) {
-            int obj = meshAData.triangleToObject[tri];
-            if (!seen[obj]) {
-                uint3 idx = meshAData.indices[tri];
-                aFirstVertices[obj] = meshAData.vertices[idx.x];
-                seen[obj] = true;
-            }
-        }
-    }
-
-    float3* d_aFirstVertices = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_aFirstVertices, numAObjects * sizeof(float3)));
-    CUDA_CHECK(cudaMemcpy(d_aFirstVertices, aFirstVertices.data(),
-                          numAObjects * sizeof(float3), cudaMemcpyHostToDevice));
-
     constexpr int kAnyhitMaxUniqueAObjects = 512;
     const int maxTrackedObjects = std::max(numAObjects, numBObjects);
     int* d_anyhit_a_ids = nullptr;
@@ -327,94 +396,25 @@ int main(int argc, char* argv[]) {
     int intersectionHTSize = 16777216;
     int containmentHTSize = 16777216;
 
-    auto estimatePairsAndSizeTables = [&](bool verbose) {
-        long long estimatedPairs = 0;
-        if (meshAData.grid.hasGrid && meshBData.grid.hasGrid) {
-            float cellVolume = meshAData.grid.cellSize * meshAData.grid.cellSize * meshAData.grid.cellSize;
-
-            struct Int3Hash {
-                size_t operator()(const int3& k) const {
-                    return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1) ^ (std::hash<int>()(k.z) << 2);
-                }
-            };
-            struct Int3Equal {
-                bool operator()(const int3& a, const int3& b) const {
-                    return a.x == b.x && a.y == b.y && a.z == b.z;
-                }
-            };
-
-            std::unordered_map<int3, GridCell, Int3Hash, Int3Equal> mapA;
-            for (const auto& entry : meshAData.grid.sparseCells) {
-                mapA[entry.index] = entry.stats;
-            }
-
-            std::vector<GridCell> matchedA;
-            std::vector<GridCell> matchedB;
-
-            for (const auto& entry : meshBData.grid.sparseCells) {
-                auto it = mapA.find(entry.index);
-                if (it != mapA.end()) {
-                    matchedA.push_back(it->second);
-                    matchedB.push_back(entry.stats);
-                }
-            }
-
-            int numMatchedCells = (int)matchedA.size();
-            float estimatedPairsFloat = 0.0f;
-            if (numMatchedCells > 0) {
-                estimatedPairsFloat = estimateIntersectionSelectivity(
-                    matchedA.data(), matchedB.data(), numMatchedCells,
-                    cellVolume, epsilon, gamma);
-            }
-
-            float avgSize1 = calculateGlobalAvgSize(meshAData.grid.sparseCells);
-            float avgSize2 = calculateGlobalAvgSize(meshBData.grid.sparseCells);
-            float avgVolRatio1 = calculateGlobalAvgVolRatio(meshAData.grid.sparseCells);
-            float avgVolRatio2 = calculateGlobalAvgVolRatio(meshBData.grid.sparseCells);
-            float effectiveSize1 = avgSize1 * std::cbrt(avgVolRatio1);
-            float effectiveSize2 = avgSize2 * std::cbrt(avgVolRatio2);
-            float combinedSize = effectiveSize1 + effectiveSize2;
-            float minkowskiVol = combinedSize * combinedSize * combinedSize;
-            if (cellVolume < 1e-9f) cellVolume = 1e-9f;
-            float alpha = minkowskiVol / cellVolume;
-            if (alpha < 1.0f) alpha = 1.0f;
-
-            estimatedPairs = (long long)(estimatedPairsFloat / alpha);
-
-            if (verbose) {
-                std::cout << "\n=== Containment Selectivity Estimation ===" << std::endl;
-                std::cout << "Matched Sparse Cells:      " << numMatchedCells << std::endl;
-                std::cout << "Raw Potential Pairs:       " << (long long)estimatedPairsFloat << std::endl;
-                std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
-                std::cout << "==========================================\n" << std::endl;
-            }
-        }
-
-        if (estimatedPairs > 0) {
-            unsigned long long target = (unsigned long long)(estimatedPairs / hashLoadFactor);
-            if (target < 1024) target = 1024;
-            if (target > 536870912ULL) target = 536870912ULL; // Cap at 512M slots (~4GB each)
-            intersectionHTSize = (int)target;
-            containmentHTSize = (int)target;
-            if (intersectionHTSize % 2 == 0) intersectionHTSize++;
-            if (containmentHTSize % 2 == 0) containmentHTSize++;
-        }
-    };
-
     unsigned long long* d_intersectionHT = nullptr;
     unsigned long long* d_containmentHT  = nullptr;
-    unsigned long long* d_containmentHT_reverse = nullptr;
-
     auto run_alloc_tables = [&]() {
         CUDA_CHECK(cudaMalloc(&d_intersectionHT, (size_t)intersectionHTSize * sizeof(unsigned long long)));
         CUDA_CHECK(cudaMalloc(&d_containmentHT,  (size_t)containmentHTSize  * sizeof(unsigned long long)));
-        CUDA_CHECK(cudaMalloc(&d_containmentHT_reverse, (size_t)containmentHTSize * sizeof(unsigned long long)));
     };
 
     auto runOnce = [&](bool verbose, bool recordBreakdownPhases) {
         if (recordBreakdownPhases) {
             auto t_est_0 = std::chrono::high_resolution_clock::now();
-            estimatePairsAndSizeTables(verbose);
+            const long long estimatedPairs = estimateContainmentPairs(
+                meshAData,
+                meshBData,
+                epsilon,
+                gamma,
+                verbose
+            );
+            intersectionHTSize = chooseContainmentHashTableSize(estimatedPairs, hashLoadFactor);
+            containmentHTSize = intersectionHTSize;
             auto t_est_1 = std::chrono::high_resolution_clock::now();
             timer.addMeasurement(
                 "Selectivity Estimation",
@@ -427,9 +427,6 @@ int main(int argc, char* argv[]) {
                               (size_t)intersectionHTSize * sizeof(unsigned long long)));
         CUDA_CHECK(cudaMemset(d_containmentHT,  0xFF,
                               (size_t)containmentHTSize  * sizeof(unsigned long long)));
-        CUDA_CHECK(cudaMemset(d_containmentHT_reverse, 0xFF,
-                              (size_t)containmentHTSize * sizeof(unsigned long long)));
-
         MeshContainmentLaunchParams params{};
 
         // Phase 1a: B edges → A
@@ -496,23 +493,6 @@ int main(int argc, char* argv[]) {
         if (recordBreakdownPhases) {
             timer.addMeasurement(
                 "Raytrace_Containment_Hash_Mesh2ToMesh1",
-                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
-        }
-
-        MeshContainmentLaunchParams reverseParams = params;
-        reverseParams.target_handle = bAS.getHandle();
-        reverseParams.target_triangle_to_object = bUploader.getTriangleToObject();
-        reverseParams.b_first_vertices = d_aFirstVertices;
-        reverseParams.b_num_objects = numAObjects;
-        reverseParams.containment_hash_table = d_containmentHT_reverse;
-        reverseParams.containment_hash_table_size = containmentHTSize;
-
-        t0 = std::chrono::high_resolution_clock::now();
-        launcher.launchPointInMesh(reverseParams, numAObjects);
-        t1 = std::chrono::high_resolution_clock::now();
-        if (recordBreakdownPhases) {
-            timer.addMeasurement(
-                "Raytrace_Containment_Hash_Mesh1ToMesh2",
                 std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
         }
 
@@ -588,7 +568,15 @@ int main(int argc, char* argv[]) {
 
     if (warmupRuns > 0) {
         std::cout << "Running " << warmupRuns << " warmup iterations..." << std::endl;
-        estimatePairsAndSizeTables(false);
+        const long long estimatedPairs = estimateContainmentPairs(
+            meshAData,
+            meshBData,
+            epsilon,
+            gamma,
+            false
+        );
+        intersectionHTSize = chooseContainmentHashTableSize(estimatedPairs, hashLoadFactor);
+        containmentHTSize = intersectionHTSize;
         run_alloc_tables();
         for (int w = 0; w < warmupRuns; ++w) runOnce(false, false);
     }
@@ -607,8 +595,7 @@ int main(int argc, char* argv[]) {
         // Free tables from previous run if any
         if (d_intersectionHT) CUDA_CHECK(cudaFree(d_intersectionHT));
         if (d_containmentHT) CUDA_CHECK(cudaFree(d_containmentHT));
-        if (d_containmentHT_reverse) CUDA_CHECK(cudaFree(d_containmentHT_reverse));
-        d_intersectionHT = d_containmentHT = d_containmentHT_reverse = nullptr;
+        d_intersectionHT = d_containmentHT = nullptr;
 
         ContainmentRunResult runResult = runOnce(run == numberOfRuns - 1, true);
         finalContainmentCount = runResult.containmentPairCount;
@@ -660,8 +647,6 @@ int main(int argc, char* argv[]) {
 
     CUDA_CHECK(cudaFree(d_intersectionHT));
     CUDA_CHECK(cudaFree(d_containmentHT));
-    CUDA_CHECK(cudaFree(d_containmentHT_reverse));
-    CUDA_CHECK(cudaFree(d_aFirstVertices));
     CUDA_CHECK(cudaFree(d_bFirstVertices));
     if (d_anyhit_num_unique) CUDA_CHECK(cudaFree(d_anyhit_num_unique));
     if (d_anyhit_a_parity) CUDA_CHECK(cudaFree(d_anyhit_a_parity));
