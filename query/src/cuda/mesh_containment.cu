@@ -203,30 +203,13 @@ extern "C" __global__ void __anyhit__ah() {
     if (maxUnique <= 0 ||
         containment_params.anyhit_a_ids == nullptr ||
         containment_params.anyhit_a_parity == nullptr ||
-        containment_params.anyhit_num_unique == nullptr ||
-        containment_params.anyhit_last_obj == nullptr ||
-        containment_params.anyhit_last_t_bits == nullptr) {
+        containment_params.anyhit_num_unique == nullptr) {
         optixIgnoreIntersection();
         return;
     }
 
     const unsigned int tri = optixGetPrimitiveIndex();
     const int a_obj = containment_params.target_triangle_to_object[tri];
-    const float t = optixGetRayTmax();
-
-    const int lastObj = containment_params.anyhit_last_obj[b_obj];
-    const unsigned int lastTBits = containment_params.anyhit_last_t_bits[b_obj];
-    if (lastObj == a_obj && lastTBits != 0xFFFFFFFFU) {
-        const float lastT = __uint_as_float(lastTBits);
-        if (fabsf(t - lastT) <= 1e-5f) {
-            containment_params.anyhit_last_t_bits[b_obj] = __float_as_uint(t);
-            optixIgnoreIntersection();
-            return;
-        }
-    }
-
-    containment_params.anyhit_last_obj[b_obj] = a_obj;
-    containment_params.anyhit_last_t_bits[b_obj] = __float_as_uint(t);
 
     const int base = static_cast<int>(b_obj) * maxUnique;
     unsigned int count = containment_params.anyhit_num_unique[b_obj];
@@ -269,16 +252,12 @@ extern "C" __global__ void __raygen__point_in_mesh() {
         if (maxUnique <= 0 ||
             containment_params.anyhit_a_ids == nullptr ||
             containment_params.anyhit_a_parity == nullptr ||
-            containment_params.anyhit_num_unique == nullptr ||
-            containment_params.anyhit_last_obj == nullptr ||
-            containment_params.anyhit_last_t_bits == nullptr) {
+            containment_params.anyhit_num_unique == nullptr) {
             return;
         }
 
         const int base = b_obj * maxUnique;
         containment_params.anyhit_num_unique[b_obj] = 0U;
-        containment_params.anyhit_last_obj[b_obj] = -1;
-        containment_params.anyhit_last_t_bits[b_obj] = 0xFFFFFFFFU;
         for (int i = 0; i < maxUnique; ++i) {
             containment_params.anyhit_a_ids[base + i] = -1;
             containment_params.anyhit_a_parity[base + i] = 0U;
@@ -375,4 +354,3 @@ extern "C" __global__ void __raygen__point_in_mesh() {
 // -----------------------------------------------------------------------
 // Miss / AnyHit / ClosestHit  (shared by all raygen programs)
 // -----------------------------------------------------------------------
-

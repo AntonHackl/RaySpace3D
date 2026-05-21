@@ -371,15 +371,11 @@ int main(int argc, char* argv[]) {
     int* d_anyhit_a_ids = nullptr;
     unsigned int* d_anyhit_a_parity = nullptr;
     unsigned int* d_anyhit_num_unique = nullptr;
-    int* d_anyhit_last_obj = nullptr;
-    unsigned int* d_anyhit_last_t_bits = nullptr;
     if (useAnyhitPointInMesh) {
         const size_t slots = static_cast<size_t>(maxTrackedObjects) * static_cast<size_t>(kAnyhitMaxUniqueAObjects);
         CUDA_CHECK(cudaMalloc(&d_anyhit_a_ids, slots * sizeof(int)));
         CUDA_CHECK(cudaMalloc(&d_anyhit_a_parity, slots * sizeof(unsigned int)));
         CUDA_CHECK(cudaMalloc(&d_anyhit_num_unique, maxTrackedObjects * sizeof(unsigned int)));
-        CUDA_CHECK(cudaMalloc(&d_anyhit_last_obj, maxTrackedObjects * sizeof(int)));
-        CUDA_CHECK(cudaMalloc(&d_anyhit_last_t_bits, maxTrackedObjects * sizeof(unsigned int)));
     }
 
     // ------------------------------------------------------------------
@@ -411,7 +407,7 @@ int main(int argc, char* argv[]) {
                 meshBData,
                 epsilon,
                 gamma,
-                verbose
+                false
             );
             intersectionHTSize = chooseContainmentHashTableSize(estimatedPairs, hashLoadFactor);
             containmentHTSize = intersectionHTSize;
@@ -419,6 +415,14 @@ int main(int argc, char* argv[]) {
             timer.addMeasurement(
                 "Selectivity Estimation",
                 std::chrono::duration_cast<std::chrono::microseconds>(t_est_1 - t_est_0).count());
+
+            if (verbose) {
+                std::cout << "\n=== Containment Selectivity Estimation ===" << std::endl;
+                std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+                std::cout << "Hash Table Size:           " << containmentHTSize
+                          << " (Load Factor ~" << hashLoadFactor << ")" << std::endl;
+                std::cout << "==========================================\n" << std::endl;
+            }
             
             run_alloc_tables();
         }
@@ -449,8 +453,6 @@ int main(int argc, char* argv[]) {
         params.anyhit_a_ids = d_anyhit_a_ids;
         params.anyhit_a_parity = d_anyhit_a_parity;
         params.anyhit_num_unique = d_anyhit_num_unique;
-        params.anyhit_last_obj = d_anyhit_last_obj;
-        params.anyhit_last_t_bits = d_anyhit_last_t_bits;
         params.overlap_max_iterations = options.overlapMaxIterations;
         params.containment_max_iterations = options.containmentMaxIterations;
 
@@ -651,8 +653,6 @@ int main(int argc, char* argv[]) {
     if (d_anyhit_num_unique) CUDA_CHECK(cudaFree(d_anyhit_num_unique));
     if (d_anyhit_a_parity) CUDA_CHECK(cudaFree(d_anyhit_a_parity));
     if (d_anyhit_a_ids) CUDA_CHECK(cudaFree(d_anyhit_a_ids));
-    if (d_anyhit_last_t_bits) CUDA_CHECK(cudaFree(d_anyhit_last_t_bits));
-    if (d_anyhit_last_obj) CUDA_CHECK(cudaFree(d_anyhit_last_obj));
     PrecomputedEdgeData::freeEdgeData(aEdgeData);
     PrecomputedEdgeData::freeEdgeData(bEdgeData);
 

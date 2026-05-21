@@ -14,6 +14,7 @@
 #include <cmath>
 #include <chrono>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include "../optix/OptixContext.h"
 #include "../optix/OptixPipeline.h"
@@ -332,6 +333,7 @@ public:
 
     std::string queryDirectionArg = "both";
     bool estimateOnly = false;
+    bool enableTracking = false;
     bool enableProfilingStats = false;
     std::string pairsOutputPath;
     std::string pairHitsOutputPath;
@@ -355,6 +357,7 @@ public:
         options.emplace_back("--containment-max-iterations <int>", "Containment ray iteration cap (default: 1024)");
         options.emplace_back("--use-anyhit-containment", "Use AnyHit accumulation for containment rays (default: enabled)");
         options.emplace_back("--hash-load-factor <float>", "Hash load factor in (0,1] (default: 0.5)");
+        options.emplace_back("--enable-tracking", "Enable optional containment candidate tracking and CSV exports");
         options.emplace_back("--enable-profiling-stats", "Enable device-side profiling counters");
         options.emplace_back("--pairs-output <path>", "Intersection pairs CSV path (default: intersection_pairs.csv)");
         options.emplace_back("--pair-hits-output <path>", "Pair hit tracking CSV path (default: intersection_pair_hits.csv)");
@@ -403,6 +406,10 @@ protected:
             hashLoadFactor = std::stof(argv[++i]);
             return true;
         }
+        if (arg == "--enable-tracking") {
+            enableTracking = true;
+            return true;
+        }
         if (arg == "--enable-profiling-stats") {
             enableProfilingStats = true;
             return true;
@@ -423,6 +430,127 @@ protected:
     }
 };
 
+static unsigned long long packIntersectionPairKey(int mesh1ObjectId, int mesh2ObjectId) {
+    return (static_cast<unsigned long long>(static_cast<unsigned int>(mesh1ObjectId)) << 32) |
+        static_cast<unsigned long long>(static_cast<unsigned int>(mesh2ObjectId));
+}
+
+static void writeIntersectionTrackingCsv(
+    const std::string& outputPath,
+    int maxTargetsPerSource,
+    const std::vector<int>& mesh1TargetIds,
+    const std::vector<unsigned int>& mesh1TargetHits,
+    const std::vector<int>& mesh2TargetIds,
+    const std::vector<unsigned int>& mesh2TargetHits,
+    const std::unordered_set<unsigned long long>& finalPairs
+) {
+    std::ofstream out(outputPath);
+    if (!out.is_open()) {
+        throw std::runtime_error("Failed to open intersection tracking output: " + outputPath);
+    }
+
+    out << "direction,source_object_id,target_object_id,target_ray_hits,final_pair\n";
+
+    const int mesh1Sources = static_cast<int>(mesh1TargetIds.size()) / maxTargetsPerSource;
+    for (int src = 0; src < mesh1Sources; ++src) {
+        const int base = src * maxTargetsPerSource;
+        for (int i = 0; i < maxTargetsPerSource; ++i) {
+            const int tgt = mesh1TargetIds[base + i];
+            if (tgt < 0) {
+                continue;
+            }
+            const bool isFinalPair = finalPairs.count(packIntersectionPairKey(src, tgt)) > 0;
+            out << "mesh1_to_mesh2," << src << ',' << tgt << ',' << mesh1TargetHits[base + i] << ','
+                << (isFinalPair ? 1 : 0) << "\n";
+        }
+    }
+
+    const int mesh2Sources = static_cast<int>(mesh2TargetIds.size()) / maxTargetsPerSource;
+    for (int src = 0; src < mesh2Sources; ++src) {
+        const int base = src * maxTargetsPerSource;
+        for (int i = 0; i < maxTargetsPerSource; ++i) {
+            const int tgt = mesh2TargetIds[base + i];
+            if (tgt < 0) {
+                continue;
+            }
+            const bool isFinalPair = finalPairs.count(packIntersectionPairKey(tgt, src)) > 0;
+            out << "mesh2_to_mesh1," << src << ',' << tgt << ',' << mesh2TargetHits[base + i] << ','
+                << (isFinalPair ? 1 : 0) << "\n";
+        }
+    }
+}
+
+static void writeIntersectionTrackingSummaryCsv(
+    const std::string& outputPath,
+    int maxTargetsPerSource,
+    const std::vector<int>& mesh1TargetIds,
+    const std::vector<unsigned int>& mesh1TargetHits,
+    const std::vector<unsigned int>& mesh1Iterations,
+    const std::vector<unsigned int>& mesh1CandidateCounts,
+    const std::vector<unsigned int>& mesh1CandidateOverflows,
+    const std::vector<int>& mesh2TargetIds,
+    const std::vector<unsigned int>& mesh2TargetHits,
+    const std::vector<unsigned int>& mesh2Iterations,
+    const std::vector<unsigned int>& mesh2CandidateCounts,
+    const std::vector<unsigned int>& mesh2CandidateOverflows,
+    const std::unordered_set<unsigned long long>& finalPairs
+) {
+    std::ofstream out(outputPath);
+    if (!out.is_open()) {
+        throw std::runtime_error("Failed to open containment tracking output: " + outputPath);
+    }
+
+    out << "direction,source_object_id,iterations,candidate_count,tracked_target_count,tracked_hit_total,candidate_overflow_events,final_pair_count,tracked_final_pair_count\n";
+
+    const int mesh1Sources = static_cast<int>(mesh1Iterations.size());
+    for (int src = 0; src < mesh1Sources; ++src) {
+        const int base = src * maxTargetsPerSource;
+        int trackedTargetCount = 0;
+        unsigned long long trackedHitTotal = 0;
+        int trackedFinalPairCount = 0;
+        for (int i = 0; i < maxTargetsPerSource; ++i) {
+            const int tgt = mesh1TargetIds[base + i];
+            if (tgt < 0) {
+                continue;
+            }
+            trackedTargetCount++;
+            trackedHitTotal += mesh1TargetHits[base + i];
+            if (finalPairs.count(packIntersectionPairKey(src, tgt)) > 0) {
+                trackedFinalPairCount++;
+            }
+        }
+
+        const int finalPairCount = trackedFinalPairCount;
+        out << "mesh1_to_mesh2," << src << ',' << mesh1Iterations[src] << ','
+            << mesh1CandidateCounts[src] << ',' << trackedTargetCount << ',' << trackedHitTotal << ','
+            << mesh1CandidateOverflows[src] << ',' << finalPairCount << ',' << trackedFinalPairCount << "\n";
+    }
+
+    const int mesh2Sources = static_cast<int>(mesh2Iterations.size());
+    for (int src = 0; src < mesh2Sources; ++src) {
+        const int base = src * maxTargetsPerSource;
+        int trackedTargetCount = 0;
+        unsigned long long trackedHitTotal = 0;
+        int trackedFinalPairCount = 0;
+        for (int i = 0; i < maxTargetsPerSource; ++i) {
+            const int tgt = mesh2TargetIds[base + i];
+            if (tgt < 0) {
+                continue;
+            }
+            trackedTargetCount++;
+            trackedHitTotal += mesh2TargetHits[base + i];
+            if (finalPairs.count(packIntersectionPairKey(tgt, src)) > 0) {
+                trackedFinalPairCount++;
+            }
+        }
+
+        const int finalPairCount = trackedFinalPairCount;
+        out << "mesh2_to_mesh1," << src << ',' << mesh2Iterations[src] << ','
+            << mesh2CandidateCounts[src] << ',' << trackedTargetCount << ',' << trackedHitTotal << ','
+            << mesh2CandidateOverflows[src] << ',' << finalPairCount << ',' << trackedFinalPairCount << "\n";
+    }
+}
+
 int main(int argc, char* argv[]) {
     PerformanceTimer timer;
     IntersectionEstimatedCliOptions options;
@@ -440,6 +568,7 @@ int main(int argc, char* argv[]) {
     const std::string& ptxPath = options.ptxPath;
     const std::string& queryDirectionArg = options.queryDirectionArg;
     const bool estimateOnly = options.estimateOnly;
+    const bool enableTracking = options.enableTracking;
     const bool enableProfilingStats = options.enableProfilingStats;
     const std::string pairsOutputPath = options.pairsOutputPath.empty()
         ? "intersection_pairs.csv"
@@ -510,14 +639,25 @@ int main(int argc, char* argv[]) {
 
     // --- ESTIMATION PHASE ---
     timer.next("Selectivity Estimation");
-    long long estimatedPairs = estimateIntersectionPairs(mesh1, mesh2, epsilon, gamma, true);
+    long long estimatedPairs = estimateIntersectionPairs(mesh1, mesh2, epsilon, gamma, false);
+
+    int hash_table_size = chooseIntersectionHashTableSize(estimatedPairs, hashLoadFactor);
 
     if (estimateOnly) {
+        std::cout << "\n=== Query Configuration ===" << std::endl;
+        std::cout << "Estimated Pairs:    " << estimatedPairs << std::endl;
+        std::cout << "Hash Table Size:    " << hash_table_size << " (Load Factor ~" << hashLoadFactor << ")" << std::endl;
+        std::cout << "Query Direction:    " << queryDirectionArg << std::endl;
+        std::cout << "Overlap Max Iter:   " << overlapMaxIterations << std::endl;
+        std::cout << "Contain Max Iter:   " << containmentMaxIterations << std::endl;
+        std::cout << "Tracking:           " << (enableTracking ? "enabled" : "disabled") << std::endl;
+        std::cout << "Profiling Stats:    " << (enableProfilingStats ? "enabled" : "disabled") << std::endl;
+        std::cout << "===========================\n" << std::endl;
         timer.finish(outputJsonPath);
         return 0;
     }
 
-    int hash_table_size = chooseIntersectionHashTableSize(estimatedPairs, hashLoadFactor);
+    timer.next("Init OptiX");
 
     std::cout << "\n=== Query Configuration ===" << std::endl;
     std::cout << "Estimated Pairs:    " << estimatedPairs << std::endl;
@@ -525,12 +665,11 @@ int main(int argc, char* argv[]) {
     std::cout << "Query Direction:    " << queryDirectionArg << std::endl;
     std::cout << "Overlap Max Iter:   " << overlapMaxIterations << std::endl;
     std::cout << "Contain Max Iter:   " << containmentMaxIterations << std::endl;
+    std::cout << "Tracking:           " << (enableTracking ? "enabled" : "disabled") << std::endl;
     std::cout << "Profiling Stats:    " << (enableProfilingStats ? "enabled" : "disabled") << std::endl;
     std::cout << "===========================\n" << std::endl;
 
     // --- EXECUTION PHASE ---
-    timer.next("Init OptiX");
-
     // Create OptiX context and pipeline (reuse existing project patterns)
     OptixContext context;
     OptixPipelineManager basePipeline(context, ptxPath);
@@ -693,15 +832,32 @@ int main(int argc, char* argv[]) {
     params2.anyhit_candidate_count_per_source = d_anyhit_candidate_count_mesh2;
     params2.anyhit_candidate_overflow_per_source = d_anyhit_candidate_overflow_mesh2;
 
-    // Allocate and configure pair-hit tracking
     PairHitTrackingBuffers pairHitBuffers;
-    pairHitBuffers.allocate(mesh1NumObjects, mesh2NumObjects);
-    pairHitBuffers.setupLaunchParams(params1, params2);
-
-    // Allocate and configure per-source containment traversal tracking
     ContainmentTrackingBuffers containmentTrackingBuffers;
-    containmentTrackingBuffers.allocate(mesh1NumObjects, mesh2NumObjects);
-    containmentTrackingBuffers.setupLaunchParams(params1, params2);
+    if (enableTracking) {
+        pairHitBuffers.allocate(mesh1NumObjects, mesh2NumObjects);
+        pairHitBuffers.setupLaunchParams(params1, params2);
+        containmentTrackingBuffers.allocate(mesh1NumObjects, mesh2NumObjects);
+        containmentTrackingBuffers.setupLaunchParams(params1, params2);
+    } else {
+        params1.enable_pair_hit_tracking = 0;
+        params1.max_pair_targets_per_source = 0;
+        params1.pair_target_object_ids = nullptr;
+        params1.pair_target_hit_counts = nullptr;
+        params2.enable_pair_hit_tracking = 0;
+        params2.max_pair_targets_per_source = 0;
+        params2.pair_target_object_ids = nullptr;
+        params2.pair_target_hit_counts = nullptr;
+
+        params1.enable_containment_tracking = 0;
+        params1.containment_iterations_per_source = nullptr;
+        params1.containment_candidate_count_per_source = nullptr;
+        params1.containment_candidate_overflow_per_source = nullptr;
+        params2.enable_containment_tracking = 0;
+        params2.containment_iterations_per_source = nullptr;
+        params2.containment_candidate_count_per_source = nullptr;
+        params2.containment_candidate_overflow_per_source = nullptr;
+    }
 
     timer.next("Warmup");
     if (warmupRuns > 0) {
@@ -735,10 +891,6 @@ int main(int argc, char* argv[]) {
     timer.addCounter("Profile_Actual_Intersection_Pairs", static_cast<unsigned long long>(results.numUnique));
 
 
-    // Copy pair-hit tracking data and export CSV
-    pairHitBuffers.copyFromDevice(mesh1NumObjects, mesh2NumObjects);
-    containmentTrackingBuffers.copyFromDevice(mesh1NumObjects, mesh2NumObjects);
-
     std::vector<MeshQueryResult> h_pairs(results.numUnique);
     if (results.numUnique > 0) {
         CUDA_CHECK(cudaMemcpy(
@@ -751,26 +903,46 @@ int main(int argc, char* argv[]) {
 
     writeIntersectionPairsCsv(pairsOutputPath, h_pairs);
 
-    writePairHitTrackingCsv(
-        pairHitsOutputPath,
-        PairHitTrackingBuffers::kMaxPairTargetsPerSource,
-        pairHitBuffers.h_mesh1_pair_target_ids,
-        pairHitBuffers.h_mesh1_pair_target_hits,
-        pairHitBuffers.h_mesh2_pair_target_ids,
-        pairHitBuffers.h_mesh2_pair_target_hits
-    );
-    writeContainmentTrackingCsv(
-        containmentTrackingOutputPath,
-        containmentTrackingBuffers.h_mesh1_iterations,
-        containmentTrackingBuffers.h_mesh1_candidate_counts,
-        containmentTrackingBuffers.h_mesh1_candidate_overflows,
-        containmentTrackingBuffers.h_mesh2_iterations,
-        containmentTrackingBuffers.h_mesh2_candidate_counts,
-        containmentTrackingBuffers.h_mesh2_candidate_overflows
-    );
+    if (enableTracking) {
+        pairHitBuffers.copyFromDevice(mesh1NumObjects, mesh2NumObjects);
+        containmentTrackingBuffers.copyFromDevice(mesh1NumObjects, mesh2NumObjects);
+
+        std::unordered_set<unsigned long long> finalPairs;
+        finalPairs.reserve(h_pairs.size() * 2 + 1);
+        for (const auto& pair : h_pairs) {
+            finalPairs.insert(packIntersectionPairKey(pair.object_id_mesh1, pair.object_id_mesh2));
+        }
+
+        writeIntersectionTrackingCsv(
+            pairHitsOutputPath,
+            PairHitTrackingBuffers::kMaxPairTargetsPerSource,
+            pairHitBuffers.h_mesh1_pair_target_ids,
+            pairHitBuffers.h_mesh1_pair_target_hits,
+            pairHitBuffers.h_mesh2_pair_target_ids,
+            pairHitBuffers.h_mesh2_pair_target_hits,
+            finalPairs
+        );
+        writeIntersectionTrackingSummaryCsv(
+            containmentTrackingOutputPath,
+            PairHitTrackingBuffers::kMaxPairTargetsPerSource,
+            pairHitBuffers.h_mesh1_pair_target_ids,
+            pairHitBuffers.h_mesh1_pair_target_hits,
+            containmentTrackingBuffers.h_mesh1_iterations,
+            containmentTrackingBuffers.h_mesh1_candidate_counts,
+            containmentTrackingBuffers.h_mesh1_candidate_overflows,
+            pairHitBuffers.h_mesh2_pair_target_ids,
+            pairHitBuffers.h_mesh2_pair_target_hits,
+            containmentTrackingBuffers.h_mesh2_iterations,
+            containmentTrackingBuffers.h_mesh2_candidate_counts,
+            containmentTrackingBuffers.h_mesh2_candidate_overflows,
+            finalPairs
+        );
+    }
     std::cout << "Intersection pairs CSV: " << pairsOutputPath << std::endl;
-    std::cout << "Pair hit tracking CSV: " << pairHitsOutputPath << std::endl;
-    std::cout << "Containment tracking CSV: " << containmentTrackingOutputPath << std::endl;
+    if (enableTracking) {
+        std::cout << "Pair hit tracking CSV: " << pairHitsOutputPath << std::endl;
+        std::cout << "Containment tracking CSV: " << containmentTrackingOutputPath << std::endl;
+    }
 
     if (enableProfilingStats) {
         CUDA_CHECK(cudaMemcpy(&h_profiling_stats, d_profiling_stats, sizeof(MeshIntersectionProfilingStats), cudaMemcpyDeviceToHost));

@@ -41,8 +41,6 @@ struct MeshContainmentLaunchParams {
     int* anyhit_a_ids;
     unsigned int* anyhit_a_parity;
     unsigned int* anyhit_num_unique;
-    int* anyhit_last_obj;
-    unsigned int* anyhit_last_t_bits;
 
     // Iteration limits (passed from CLI)
     int overlap_max_iterations;

@@ -504,7 +504,21 @@ int main(int argc, char* argv[]) {
 
     if (estimateOnly) {
         timer.next("Selectivity Estimation");
-        (void)estimatePairs(true);
+        const long long estimatedPairs = estimatePairs(false);
+        const unsigned long long hash_table_size = (manualHashTableSize > 0)
+            ? manualHashTableSize
+            : computeHashTableSize(estimatedPairs);
+        std::cout << "\n=== Selectivity Estimation (Overlap - Direct) ===" << std::endl;
+        std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
+        if (manualHashTableSize > 0) {
+            std::cout << "Using Manual Hash Table Size: " << hash_table_size << std::endl;
+        } else if (hashTableFreeMemFraction > 0.0f) {
+            std::cout << "Using Free GPU Memory Hash Table Size: " << hash_table_size << std::endl;
+        } else {
+            std::cout << "Using Direct Estimated Hash Table Size: " << hash_table_size << std::endl;
+        }
+        std::cout << "Hash Table Allocated Bytes: "
+                  << (hash_table_size * sizeof(unsigned long long)) << std::endl;
         timer.finish(outputJsonPath);
         return 0;
     }
@@ -610,12 +624,16 @@ int main(int argc, char* argv[]) {
         bool verboseRun = (run == 0);
 
         timer.next("Selectivity Estimation");
-        long long estimatedPairs = estimatePairs(verboseRun);
+        long long estimatedPairs = estimatePairs(false);
         unsigned long long hash_table_size = (manualHashTableSize > 0)
             ? manualHashTableSize
             : computeHashTableSize(estimatedPairs);
 
+        timer.next("Execute Hash Query");
+
         if (verboseRun) {
+            std::cout << "\n=== Selectivity Estimation (Overlap - Direct) ===" << std::endl;
+            std::cout << "Final Estimated Pairs:     " << estimatedPairs << std::endl;
             if (manualHashTableSize > 0) {
                 std::cout << "Using Manual Hash Table Size: " << hash_table_size << std::endl;
             } else if (hashTableFreeMemFraction > 0.0f) {
@@ -630,7 +648,6 @@ int main(int argc, char* argv[]) {
         unsigned long long* d_hash_table = nullptr;
         CUDA_CHECK(cudaMalloc(&d_hash_table, hash_table_size * sizeof(unsigned long long)));
 
-        timer.next("Execute Hash Query");
         QueryResults queryResults = executeHashQuery(
             edgesLauncher,
             edgesParams1,
